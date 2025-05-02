@@ -296,7 +296,7 @@ def create_yaml(names: Union[list, dict], need_test: bool=False, need_labels: bo
             for name in names:
                 f.write(name + '\n')
 
-def train(model_selection: str, yaml_data: str, yolo_world: bool=False, rtdter: bool=False, epochs: int = 100, batch: int = -1, val: bool = True,
+def train(model_selection: Union[str, list], yaml_data: str, yolo_world: bool=False, rtdter: bool=False, epochs: int = 100, batch: int = -1, val: bool = True,
            save_period: int = -1, project: str = None, pretrained: str = None, single_cls: bool = False,close_mosaic: int = 10,
              lr0: float = 0.01, lrf: float=0.01, workers: int = 0, seed_change: bool = False, cls: float = 0.5, imgsz: int = 640,
              optimizer="SGD", patience=100, resume: bool = False, plots=True, cos_lr=True, iou:float=0.7, task: str="detect"):
@@ -307,7 +307,12 @@ def train(model_selection: str, yaml_data: str, yolo_world: bool=False, rtdter: 
     seed = random.randint(1, 1e9) if seed_change else 1
     if yolo_world: model = YOLOWorld(model_selection)
     elif rtdter: model = RTDETR(model_selection)
-    else: model = YOLO(model_selection)
+    else: 
+        if not isinstance(model_selection, list):
+            model = YOLO(model_selection)
+        else:
+            model = YOLO(model_selection[0]) if model_selection[0].endswith("yaml") else YOLO(model_selection[1])
+            model.load(model_selection[1])
 
     print("Loading Model Success...")
     model.train(data=yaml_data, epochs=epochs, workers=workers, batch=batch,
@@ -463,7 +468,7 @@ if __name__ == "__main__":
     #                    'car': 4, 'company': 5, 'cone': 6, 'crosswalk': 7,
     #                      'pedestrian': 8, 'school': 9,}, need_test=True)
 
-    train(model_selection='./best.pt', yaml_data='./data/data.yaml', workers=4, patience=0, 
+    train(model_selection=['./yolo11n_Ghost_SPPELAN.yaml', './best.pt'], yaml_data='./data/data.yaml', workers=4, patience=0, 
         epochs=100, batch=24, val=True, lr0=0.0002, lrf=0.1, seed_change=True, iou=0.7, optimizer="Adam",
         imgsz=416, single_cls=False, resume=False, close_mosaic=0)
 
