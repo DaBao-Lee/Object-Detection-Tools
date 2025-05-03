@@ -287,7 +287,7 @@ def create_yaml(names: Union[list, dict], need_test: bool=False, need_labels: bo
             "names": names 
         }
         if need_test:
-            config["test"] = "./data/test/images"
+            config["test"] = "./data/test/images (Optional)"
 
         yaml.dump(config, f, indent=2)
 
@@ -397,7 +397,7 @@ def add_pillow_text(img_array:np.array, font_path: str, text: str, position, tex
 def advanced_predict(model_selection: str, img_path: Union[str, list], yolo_world=False, conf: float = 0.5,
                     save: bool = False, show: bool = True, font_path=None, replace_text: dict = None, iou: float = 0.7):
 
-    from ultralytics import YOLO, YOLOWorld, RTDETR
+    from ultralytics import YOLO, YOLOWorld
 
     if yolo_world: model = YOLOWorld(model_selection)
     else: model = YOLO(model_selection)
@@ -442,7 +442,7 @@ def advanced_predict(model_selection: str, img_path: Union[str, list], yolo_worl
 
 def export_model(model_selection: str, yolo_world: bool=False, format: str="onnx"):
     
-    from ultralytics import YOLO, YOLOWorld, RTDETR
+    from ultralytics import YOLO, YOLOWorld
 
     if yolo_world: model = YOLOWorld(model_selection)
     else: model = YOLO(model_selection)
@@ -451,7 +451,12 @@ def export_model(model_selection: str, yolo_world: bool=False, format: str="onnx
 
     print("Model exported successfully.")
 
-def show_pic(img: cv2.Mat, title: str="Image") -> None:
+def show_pic(img: Union[cv2.Mat, str], title: str="Image") -> None:
+
+    if isinstance(img, str):
+        img = cv2.imread(img, cv2.COLOR_BGR2RGB)
+    
+    assert img is not None, "Image not found or invalid image path."
 
     cv2.imshow(title, img)
     
@@ -460,16 +465,16 @@ def show_pic(img: cv2.Mat, title: str="Image") -> None:
 
 if __name__ == "__main__":
 
-    # train_test_split(img_label_path='./Original/meta/', create_dir=True,
-    #                   random_seed=100, upset=True, need_test=False,
-    #                   need_negative=False)
+    train_test_split(img_label_path='./Original/meta/', create_dir=True,
+                      random_seed=100, upset=True, need_test=False,
+                      need_negative=False)
     
-    # create_yaml(names={'battery': 0, 'block': 1, 'bridge': 2, 'burger': 3,
-    #                    'car': 4, 'company': 5, 'cone': 6, 'crosswalk': 7,
-    #                      'pedestrian': 8, 'school': 9,}, need_test=True)
+    create_yaml(names={'battery': 0, 'block': 1, 'bridge': 2, 'burger': 3,
+                       'car': 4, 'company': 5, 'cone': 6, 'crosswalk': 7,
+                         'pedestrian': 8, 'school': 9,}, need_test=True)
 
-    train(model_selection=['./yolo11n_Ghost_SPPELAN.yaml', './best.pt'], yaml_data='./data/data.yaml', workers=4, patience=0, 
-        epochs=100, batch=24, val=True, lr0=0.0002, lrf=0.1, seed_change=True, iou=0.7, optimizer="Adam",
+    train(model_selection='./best.pt', yaml_data='./data/data.yaml', workers=4, patience=0, 
+        epochs=50, batch=24, val=True, lr0=0.0001, lrf=0.1, seed_change=True, iou=0.7, optimizer="Adam",
         imgsz=416, single_cls=False, resume=False, close_mosaic=0)
 
 # './yolo11n_Ghost_SPPELAN.yaml'
