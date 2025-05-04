@@ -6,7 +6,7 @@ from tqdm import tqdm
 from typing import Union
 from collections import defaultdict
 from PIL import Image, ImageDraw, ImageFont
-import os, shutil, random, re, yaml, cv2, json
+import os, shutil, random, re, yaml, cv2, json, colorama
 
 def create_dirs(path: str):
     """

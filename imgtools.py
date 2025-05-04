@@ -332,9 +332,16 @@ def train(model_selection: Union[str, list], yaml_data: str, yolo_world: bool=Fa
             model = YOLO(model_selection)
         else:
             model = YOLO(model_selection[0]) if model_selection[0].endswith("yaml") else YOLO(model_selection[1])
-            model.load(model_selection[1])
+            try:
+                import torch
+                model.load_state_dict(torch.load(model_selection[1]))
+                print(colorama.Fore.YELLOW + "The weight of the pretrained model loads successfully.")
+            except:
+                print(colorama.Fore.RED + "The weight of the pretrained model is not compatible with the model structure.")
+                print("Loading the model structure from the yaml file...")
+                model.load(model_selection[1])
 
-    print("Loading Model Success...")
+    print(colorama.Fore.WHITE + "Loading Model Success...")
     model.train(data=yaml_data, epochs=epochs, workers=workers, batch=batch,
                 save_period=save_period, val=val, pretrained=pretrained,
                 project=project, lr0=lr0, lrf=lrf, single_cls=single_cls, imgsz=imgsz,
