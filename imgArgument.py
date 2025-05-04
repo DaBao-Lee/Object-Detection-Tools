@@ -3,7 +3,7 @@ import albumentations as A
 
 class ImageArgumentor:
 
-    def __init__(self, enhance_time: int=0, img_path:Union[str, list]=None,
+    def __init__(self, enhance_time: Union[int, str]=0, img_path:Union[str, list]=None,
                  argument_output: str=None):
         
         self.enhance_time = enhance_time
