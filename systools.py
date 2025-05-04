@@ -88,19 +88,3 @@ def ignore_something(mode: int=0):
         import warnings, logging
         warnings.filterwarnings("ignore")
         logging.disable(logging.DEBUG)
-
-
-def rename_files(path: str, mode: str="sort", file_type: str="*"):
-    """
-    重命名指定路径下的所有文件，添加前缀。
-    :param path: 要重命名的目录路径
-    :param mode: 重命名模式，默认为 "sort"
-    """
-    assert os.path.exists(path), "Path does not exist."
-    files = fetch_specific_files(path, file_type)
-    if mode == 'sort':
-        index = 0
-    for file in tqdm(files):
-        new_name = os.path.join(path, f"{index}{os.path.splitext(os.path.basename(file))[1]}")
-        os.rename(file, new_name)
-        index += 1

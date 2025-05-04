@@ -99,6 +99,27 @@ def rm_icc_profile(src_path: str) -> None:
     
     print('icc_profile 已删除')
 
+def rename_files(src_path: str, des_path: str ="./New_Annotation") -> None:
+
+    if os.path.exists(des_path):
+        rm_dirs(des_path)
+    create_dirs(des_path)
+
+    files = fetch_specific_files(src_path)
+    affix = [os.path.splitext(os.path.basename(x))[-1] for x in files]
+    if (n:= 0) or (".txt" in set(affix) or ".xml" in set(affix)):
+        label_files, typing = (fetch_specific_files(src_path, "txt"), '.txt') if ".txt" in set(affix) else (fetch_specific_files(src_path, "xml"), '.xml')
+        img_files = list(set(files).difference(set(label_files)))
+        for img_file in tqdm(img_files):
+            original_name, _ = os.path.splitext(os.path.basename(img_file))
+            shutil.copy2(img_file, os.path.join(des_path, f"{n}{_}"))
+            shutil.copy2(os.path.join(src_path, original_name + typing), os.path.join(des_path, f"{n}{typing}"))
+            n += 1
+    else:
+        assert ".txt" in set(affix) or ".xml" in set(affix), "No label files found."
+
+    print('Rename files success...')
+
 def normalize_labels(src_path: str) -> None:
 
     src_path = glob(os.path.join(src_path, '*.txt'))
@@ -127,7 +148,6 @@ def create_type_dict(path: str) -> dict:
     inverse_dict = {v: k for k, v in dic.items()}
 
     return dic, inverse_dict
-
 
 def get_type_count(path: Union[str, list], type_dict: dict, verbose: bool=True, need_return: bool=False) -> Union[dict, None]:
 
@@ -465,16 +485,16 @@ def show_pic(img: Union[cv2.Mat, str], title: str="Image") -> None:
 
 if __name__ == "__main__":
 
-    train_test_split(img_label_path='./Original/meta/', create_dir=True,
+    train_test_split(img_label_path='./Annotations/meta/', create_dir=True,
                       random_seed=100, upset=True, need_test=False,
                       need_negative=False)
     
-    create_yaml(names={'battery': 0, 'block': 1, 'bridge': 2, 'burger': 3,
-                       'car': 4, 'company': 5, 'cone': 6, 'crosswalk': 7,
-                         'pedestrian': 8, 'school': 9,}, need_test=True)
+    create_yaml(names={'Wheel': 0, 'Handle': 1, 'Base': 2, 'Basket': 3,
+                       'Pedal': 4, 'Rack': 5, 'Lock': 6, 'Helmet': 7,
+                         'Bell': 8}, need_test=True)
 
-    train(model_selection='./best.pt', yaml_data='./data/data.yaml', workers=4, patience=0, 
-        epochs=50, batch=24, val=True, lr0=0.0001, lrf=0.1, seed_change=True, iou=0.7, optimizer="Adam",
+    train(model_selection=['./yolo11n_Ghost_SPPELAN.yaml', './best.pt'], yaml_data='./data/data.yaml', workers=4, patience=0, 
+        epochs=100, batch=24, val=True, lr0=0.001, lrf=0.01, seed_change=True, iou=0.7, optimizer="Adam",
         imgsz=416, single_cls=False, resume=False, close_mosaic=0)
 
 # './yolo11n_Ghost_SPPELAN.yaml'
