@@ -330,16 +330,11 @@ def train(model_selection: Union[str, list], yaml_data: str, yolo_world: bool=Fa
     else: 
         if not isinstance(model_selection, list):
             model = YOLO(model_selection)
+            print(colorama.Fore.GREEN + "Loading the model structure from the pretrained model...")
         else:
             model = YOLO(model_selection[0]) if model_selection[0].endswith("yaml") else YOLO(model_selection[1])
-            try:
-                import torch
-                model.load_state_dict(torch.load(model_selection[1]))
-                print(colorama.Fore.YELLOW + "The weight of the pretrained model loads successfully.")
-            except:
-                print(colorama.Fore.RED + "The weight of the pretrained model is not compatible with the model structure.")
-                print("Loading the model structure from the yaml file...")
-                model.load(model_selection[1])
+            print(colorama.Fore.YELLOW + "Loading the model structure from the yaml file...")
+            model.load(model_selection[1])
 
     print(colorama.Fore.WHITE + "Loading Model Success...")
     model.train(data=yaml_data, epochs=epochs, workers=workers, batch=batch,
@@ -492,16 +487,16 @@ def show_pic(img: Union[cv2.Mat, str], title: str="Image") -> None:
 
 if __name__ == "__main__":
 
-    train_test_split(img_label_path='./Annotations/meta/', create_dir=True,
-                      random_seed=100, upset=True, need_test=False,
-                      need_negative=False)
+    # train_test_split(img_label_path='./Annotations/meta/', create_dir=True,
+    #                   random_seed=100, upset=True, need_test=False,
+    #                   need_negative=False)
     
-    create_yaml(names={'Wheel': 0, 'Handle': 1, 'Base': 2, 'Basket': 3,
-                       'Pedal': 4, 'Rack': 5, 'Lock': 6, 'Helmet': 7,
-                         'Bell': 8}, need_test=True)
+    # create_yaml(names={'Wheel': 0, 'Handle': 1, 'Base': 2, 'Basket': 3,
+    #                    'Pedal': 4, 'Rack': 5, 'Lock': 6, 'Helmet': 7,
+    #                      'Bell': 8}, need_test=True)
 
     train(model_selection=['./yolo11n_Ghost_SPPELAN.yaml', './best.pt'], yaml_data='./data/data.yaml', workers=4, patience=0, 
-        epochs=100, batch=24, val=True, lr0=0.001, lrf=0.01, seed_change=True, iou=0.7, optimizer="Adam",
+        epochs=2, batch=24, val=True, lr0=0.01, lrf=0.001, seed_change=True, iou=0.7, optimizer="Adam",
         imgsz=416, single_cls=False, resume=False, close_mosaic=0)
 
 # './yolo11n_Ghost_SPPELAN.yaml'
