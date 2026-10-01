@@ -1,2 +1,4 @@
 /.workbuddy/
+/__pycache__/
+/tools/__pycache__/*.*/
 update.bat
