@@ -24,6 +24,8 @@ def train(
     plots=True,
     cos_lr=True,
     iou: float = 0.7,
+    mosaic: float = 1.0,
+    close_mosaic: int = 10,
 ):
     # seed_change=True 时每轮实验用不同随机种子（做多次重复实验取均值）；
     # False 时固定 seed=1，保证同一份配置跑出同样结果，便于复现和调参对比。
@@ -55,4 +57,6 @@ def train(
         plots=plots,  # 是否画结果图
         cos_lr=cos_lr,  # 余弦退火学习率
         iou=iou,  # NMS IoU 阈值
+        mosaic = mosaic, # 增强概率
+        close_mosaic=close_mosaic,  # mosaic 图像增强技术
     )
