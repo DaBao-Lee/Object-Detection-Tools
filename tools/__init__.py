@@ -2,12 +2,25 @@
 
 convert 标注转换 · preprocess 数据清洗与标签治理 · dataset 数据集划分 · train 训练 ·
 val 验证 · predict 推理 · export 导出 · model_utils 权重定位 ·
-systools 通用文件操作 · video 视频抽帧。
+compare_metrics 训练指标对比可视化 · systools 通用文件操作 · video 视频抽帧。
 
 注意：部分函数带删除 / 覆盖 / 重命名语义，调用前确认路径并备份原始数据。
 """
 
 from .convert import coco_txt_BaiDu, coco_to_txt, voc_to_txt
+from .compare_metrics import (
+    METRICS,
+    Metric,
+    compare_metrics,
+    expand_csv_inputs,
+    last_n_stats,
+    list_metrics,
+    load_results_csv,
+    plot_curves,
+    read_run_label,
+    resolve_metrics,
+    smooth_series,
+)
 from .dataset import (
     check_and_copy_missing_files,
     collcet_meta,
@@ -58,6 +71,18 @@ __all__ = [
     "get_best_last_model",
     "InferDataType",
     "get_infer_data",
+    # 训练指标对比可视化
+    "compare_metrics",
+    "list_metrics",
+    "resolve_metrics",
+    "load_results_csv",
+    "expand_csv_inputs",
+    "read_run_label",
+    "smooth_series",
+    "last_n_stats",
+    "plot_curves",
+    "METRICS",
+    "Metric",
     # 数据处理
     "coco_to_txt",
     "coco_txt_BaiDu",

@@ -1,6 +1,6 @@
 # Object-Detection-Tools
 
-一个**独立、通用的目标检测工程工具包**，基于 **Ultralytics YOLO**。不依赖任何特定项目，把 `tools/` 目录放进你的工程，用 `from tools import ...` 按需调用。覆盖从**视频抽帧 → 标注格式转换 → 标签治理 → 数据集划分 → 训练 → 验证 → 推理 → 模型导出**的完整链路。
+一个**独立、通用的目标检测工程工具包**，基于 **Ultralytics YOLO**。不依赖任何特定项目，把 `tools/` 目录放进你的工程，用 `from tools import ...` 按需调用。覆盖从**视频抽帧 → 标注格式转换 → 标签治理 → 数据集划分 → 训练 → 验证 → 推理 → 模型导出 → 训练指标对比**的完整链路。
 
 ---
 
@@ -9,17 +9,19 @@
 Python ≥ 3.9（开发环境为 3.12 / 3.13）。
 
 ```bash
-pip install ultralytics opencv-python numpy pillow tqdm lxml
+pip install ultralytics opencv-python numpy pillow tqdm lxml matplotlib pandas
 ```
 
-| 依赖 | 用途 | 涉及模块 |
-|---|---|---|
-| `ultralytics` | YOLO / YOLOWorld 训练、验证、推理、导出、COCO 转换 | `train` `val` `predict` `export` `convert` |
-| `opencv-python` | 图像读写、画框、显示、视频解码 | `predict` `video` |
-| `numpy` | 坐标数组运算 | `predict` `convert` |
-| `pillow` | 中文文本绘制、ICC 配置处理、图片收集 | `predict` `preprocess` |
-| `tqdm` | 进度条 | 全部模块 |
-| `lxml` | VOC XML 解析 | `convert` |
+| 依赖              | 用途                                   | 涉及模块                                       |
+| --------------- | ------------------------------------ | ------------------------------------------ |
+| `ultralytics`   | YOLO / YOLOWorld 训练、验证、推理、导出、COCO 转换 | `train` `val` `predict` `export` `convert` |
+| `opencv-python` | 图像读写、画框、显示、视频解码                      | `predict` `video`                          |
+| `numpy`         | 坐标数组运算                               | `predict` `convert`                        |
+| `pillow`        | 中文文本绘制、ICC 配置处理、图片收集                 | `predict` `preprocess`                     |
+| `tqdm`          | 进度条                                  | 全部模块                                       |
+| `lxml`          | VOC XML 解析                           | `convert`                                  |
+| `matplotlib`    | 训练曲线绘制、中文字体与论文白底样式           | `compare_metrics`                          |
+| `pandas`        | `results.csv` 读取与统计计算                | `compare_metrics`                          |
 
 ---
 
@@ -28,6 +30,7 @@ pip install ultralytics opencv-python numpy pillow tqdm lxml
 ```
 ObjectDetection/
 ├── main.py                  # 入口壳（仅 from tools import *，预留）
+├── update.bat               # Windows 一键提交并推送脚本
 └── tools/                   # 全部功能所在
     ├── __init__.py          # 统一 re-export + __all__
     ├── convert.py           # 标注格式转换：COCO / 百度 COCO / VOC → YOLO txt
@@ -38,6 +41,7 @@ ObjectDetection/
     ├── predict.py           # 推理（内置绘图 / 自绘中文标签两套）
     ├── export.py            # 模型导出（ONNX / TensorRT / OpenVINO …）
     ├── model_utils.py       # 训练产物定位（best.pt / last.pt）
+    ├── compare_metrics.py   # 训练指标对比可视化（results.csv → 曲线 / 统计）
     ├── systools.py          # 通用文件操作（建目录、复制、删除、批量重命名）
     └── video.py             # 视频抽帧（单文件 / 批量 / 递归）
 ```
@@ -48,67 +52,82 @@ ObjectDetection/
 
 ### 🎬 数据获取 — `video.py`
 
-| 函数 | 作用 |
-|---|---|
+| 函数               | 作用                        |
+| ---------------- | ------------------------- |
 | `extract_frames` | 主入口：批量抽帧，含配置打印、逐视频报告与汇总统计 |
-| `process_video` | 抽取单个视频的帧 |
-| `collect_videos` | 从文件或文件夹收集视频 |
+| `process_video`  | 抽取单个视频的帧                  |
+| `collect_videos` | 从文件或文件夹收集视频               |
 
 ### 🔄 标注转换 — `convert.py`
 
-| 函数 | 作用 |
-|---|---|
-| `coco_to_txt` | 标准 COCO json → YOLO txt（官方转换器，按 `cls91to80` 映射类别） |
+| 函数               | 作用                                                 |
+| ---------------- | -------------------------------------------------- |
+| `coco_to_txt`    | 标准 COCO json → YOLO txt（官方转换器，按 `cls91to80` 映射类别）  |
 | `coco_txt_BaiDu` | 百度风格 COCO json → YOLO txt（自解析，不做类别映射，跳过 `iscrowd`） |
-| `voc_to_txt` | VOC XML → YOLO txt（需提供类别名→ID 映射字典） |
+| `voc_to_txt`     | VOC XML → YOLO txt（需提供类别名→ID 映射字典）                 |
 
 ### 🧹 标签治理 — `preprocess.py`
 
-| 函数 | 作用 |
-|---|---|
-| `count_labels` | 统计各类别标注数量，支持 YOLO txt + VOC xml，可配 `names` 显示中文类名 |
+| 函数                           | 作用                                                 |
+| ---------------------------- | -------------------------------------------------- |
+| `count_labels`               | 统计各类别标注数量，支持 YOLO txt + VOC xml，可配 `names` 显示中文类名  |
 | `replace_labels_with_target` | 把标签文件里**指定类别**的 ID 改成目标类别（`origin_id="all"` 为全量替换） |
-| `batch_replace_labels` | 上者的文件夹批量版，返回改动统计 |
-| `fill_empty_labels` | 为缺失标签的图片生成空标签文件（YOLO 背景图），支持 `dry_run` 预览 |
-| `normalize_labels` | 把标签坐标夹紧到 1.0 以内 |
-| `rm_icc_profile` | 删除 PNG 的 ICC 色彩配置（部分标注工具对带 ICC 的图兼容性差） |
-| `collect_images` | 收集目录下所有图片 |
-| `IMAGE_EXTS` | 模块级常见图片扩展名集合 |
+| `batch_replace_labels`       | 上者的文件夹批量版，返回改动统计                                   |
+| `fill_empty_labels`          | 为缺失标签的图片生成空标签文件（YOLO 背景图），支持 `dry_run` 预览          |
+| `normalize_labels`           | 把标签坐标夹紧到 1.0 以内                                    |
+| `rm_icc_profile`             | 删除 PNG 的 ICC 色彩配置（部分标注工具对带 ICC 的图兼容性差）             |
+| `collect_images`             | 收集目录下所有图片                                          |
+| `IMAGE_EXTS`                 | 模块级常见图片扩展名集合                                       |
 
 ### 📂 数据集组织 — `dataset.py`
 
-| 函数 | 作用 |
-|---|---|
-| `check_and_copy_missing_files` | 检查图/标签配对，找出「有图无标签」「有标签无图」的落单样本 |
-| `spilt_train_test` | 划分 train/val（可选 test）并复制落盘，支持负样本混入与固定随机种子 |
-| `split_meta` | 把目录按 `split_num` 平均切成若干份（分布式标注 / 分批处理用） |
-| `collcet_meta` | 收集 `split_meta` 各子目录的文件，可另存一份 |
-| `copy_files` | 复制文件，同名跳过，可安全重跑 |
-| `rm_files` | 删除指定文件**及其同名标签**（保证配对不被破坏） |
+| 函数                             | 作用                                        |
+| ------------------------------ | ----------------------------------------- |
+| `check_and_copy_missing_files` | 检查图/标签配对，找出「有图无标签」「有标签无图」的落单样本            |
+| `spilt_train_test`             | 划分 train/val（可选 test）并复制落盘，支持负样本混入与固定随机种子 |
+| `split_meta`                   | 把目录按 `split_num` 平均切成若干份（分布式标注 / 分批处理用）   |
+| `collcet_meta`                 | 收集 `split_meta` 各子目录的文件，可另存一份             |
+| `copy_files`                   | 复制文件，同名跳过，可安全重跑                           |
+| `rm_files`                     | 删除指定文件**及其同名标签**（保证配对不被破坏）                |
 
 ### 🏋️ 训练 / 验证 / 推理 / 导出
 
-| 模块 | 函数 | 作用 |
-|---|---|---|
-| `train.py` | `train` | YOLO 训练封装，暴露 epochs/batch/imgsz/optimizer/iou 等常用超参 |
-| `val.py` | `evaluate` | 在数据集上验证模型，返回 ultralytics 指标 |
-| `predict.py` | `predict` | 用 ultralytics 内置绘图推理，可 `show` 弹窗 / `save` 存盘 |
-| `predict.py` | `advanced_predict` | **自绘检测框**，支持中文字体与类别名整表替换 |
-| `predict.py` | `add_pillow_text` | 在图像数组上写文本（走 Pillow，解决 OpenCV 不支持中文） |
-| `predict.py` | `get_infer_data` | 按 `IMAGE`（随机抽样）/ `DIR`（整目录）取推理数据 |
-| `export.py` | `export_model` | 导出 ONNX / TensorRT / OpenVINO / TorchScript |
-| `model_utils.py` | `get_best_last_model` | 从训练产物中定位 `best.pt` / `last.pt` |
+| 模块               | 函数                    | 作用                                                                   |
+| ---------------- | --------------------- | -------------------------------------------------------------------- |
+| `train.py`       | `train`               | YOLO 训练封装，暴露 epochs / batch / imgsz / optimizer / iou / mosaic 等常用超参 |
+| `val.py`         | `evaluate`            | 在数据集上验证模型，返回 ultralytics 指标                                          |
+| `predict.py`     | `predict`             | 用 ultralytics 内置绘图推理，可 `show` 弹窗 / `save` 存盘                         |
+| `predict.py`     | `advanced_predict`    | **自绘检测框**，支持中文字体与类别名整表替换                                             |
+| `predict.py`     | `add_pillow_text`     | 在图像数组上写文本（走 Pillow，解决 OpenCV 不支持中文）                                  |
+| `predict.py`     | `get_infer_data`      | 按 `IMAGE`（随机抽样）/ `DIR`（整目录）取推理数据                                     |
+| `export.py`      | `export_model`        | 导出 ONNX / TensorRT / OpenVINO / TorchScript                          |
+| `model_utils.py` | `get_best_last_model` | 从训练产物中定位 `best.pt` / `last.pt`                                       |
 
-### 🛠️ 通用文件操作 — `systools.py`
+### 📈 训练指标对比 — `compare_metrics.py`
 
 | 函数 | 作用 |
 |---|---|
-| `create_dirs` | 建目录，`overwrite` 可取 `None`（交互确认）/ `True` / `False` |
-| `rm_dirs` | 递归删除目录 |
-| `fetch_specific_files` | 按扩展名收集文件（支持传目录或已有路径列表） |
-| `process_files` | 批量复制（`mode=0`）或删除（`mode=1`） |
-| `add_suffix_to_files` | 给文件夹内文件批量加后缀（不改扩展名），目标已存在则跳过 |
-| `ignore_something` | 屏蔽 warnings / logging |
+| `compare_metrics` | **总入口**：读一个或多个 `results.csv`，出对比曲线 + 末 N epoch 统计 |
+| `plot_curves` | 唯一出图函数（曲线叠加，可选末 N 均值参考线） |
+| `list_metrics` | 罗列可选指标（编号 / key / 列名 / 趋势），打印编号表并返回 DataFrame |
+| `resolve_metrics` | 把编号 / key / 完整列名 / 模糊子串解析成 `Metric` 列表 |
+| `expand_csv_inputs` | str / Path / 目录 / 列表 → `results.csv` 路径列表（去重、保序） |
+| `load_results_csv` | 读单个 `results.csv`，列名清洗 + 数值化 + 按 epoch 排序 |
+| `read_run_label` | 从路径提取短图例名（如 `.../ghost/results.csv` → `ghost`） |
+| `last_n_stats` | 末 N epoch 的 mean / std / best / n / start_epoch |
+| `smooth_series` | 滑动平均平滑（`window <= 1` 原样返回） |
+| `METRICS` / `Metric` | 指标注册表：15 个指标，分训练损失 / 验证指标 / 验证损失 / 训练过程四组 |
+
+### 🛠️ 通用文件操作 — `systools.py`
+
+| 函数                     | 作用                                                |
+| ---------------------- | ------------------------------------------------- |
+| `create_dirs`          | 建目录，`overwrite` 可取 `None`（交互确认）/ `True` / `False` |
+| `rm_dirs`              | 递归删除目录                                            |
+| `fetch_specific_files` | 按扩展名收集文件（支持传目录或已有路径列表）                            |
+| `process_files`        | 批量复制（`mode=0`）或删除（`mode=1`）                       |
+| `add_suffix_to_files`  | 给文件夹内文件批量加后缀（不改扩展名），目标已存在则跳过                      |
+| `ignore_something`     | 屏蔽 warnings / logging                             |
 
 ---
 
@@ -241,6 +260,8 @@ train(
     cos_lr=True,
     seed_change=False,        # False 固定 seed=1，便于复现对比
     project="./runs/detect",
+    mosaic=1.0,               # mosaic 增强概率（1.0 = 全开）
+    close_mosaic=10,          # 最后 10 轮关闭 mosaic，让模型收敛到真实分布
 )
 
 # 验证
@@ -262,6 +283,32 @@ advanced_predict(
 
 # 导出 ONNX 部署
 export_model(best, format="onnx")
+```
+
+### 6️⃣ 多实验指标对比，出论文配图
+
+```python
+from tools import compare_metrics, list_metrics
+
+# 先看有哪些指标可选，凭编号挑（返回 DataFrame，同时打印编号表）
+list_metrics("./runs/detect/baseline/yolo11/results.csv")
+
+result = compare_metrics(
+    csv_paths=[                                  # 也可直接传目录，自动递归找 results.csv
+        "./runs/detect/baseline/yolo11/results.csv",
+        "./runs/detect/improvement/GhostConv/results.csv",
+        "./runs/detect/improvement/GhostConv_SPPELAN_SimAM/results.csv",
+    ],
+    metrics=["mAP50-95", "mAP50", "box_loss"],  # 编号 / key / 列名 / 模糊子串都行
+    labels=["Baseline", "GhostConv", "Ours"],   # 不给就用路径里的目录名
+    last_n=10,          # 统计口径：末 10 个 epoch
+    std_band=True,      # 叠加末 10 epoch 均值参考线
+    smooth_window=3,    # 曲线滑动平均
+    root="./runs/detect",   # 提取图例名时的相对根目录
+    out_dir="figures", out_name="mAP_compare", dpi=300,
+    show=False,
+)
+print(result["stats"]["mAP50-95"]["Ours"])   # {'mean':…, 'std':…, 'best':…, 'n':…, 'start_epoch':…}
 ```
 
 ---
@@ -286,14 +333,14 @@ stats = count_labels(
 
 返回结构：
 
-| 键 | 含义 |
-|---|---|
-| `files` | 扫描到的标签文件数 |
-| `parsed_files` | 成功解析的文件数 |
-| `labels` | 标注总数 |
-| `counts` | `{类别: 数量}`，按数量降序 |
-| `by_format` | `{扩展名: {类别: 数量}}`，只含出现过的格式 |
-| `failed` | `[(路径, 错误信息), ...]`，单文件解析失败不中断整体统计 |
+| 键              | 含义                                 |
+| -------------- | ---------------------------------- |
+| `files`        | 扫描到的标签文件数                          |
+| `parsed_files` | 成功解析的文件数                           |
+| `labels`       | 标注总数                               |
+| `counts`       | `{类别: 数量}`，按数量降序                   |
+| `by_format`    | `{扩展名: {类别: 数量}}`，只含出现过的格式         |
+| `failed`       | `[(路径, 错误信息), ...]`，单文件解析失败不中断整体统计 |
 
 > txt 统计出的是**类别 ID**（`"0"`），xml 统计出的是**类别名**（`"car"`）。混放时 `counts` 会同时出现两者，想分开看用 `by_format`。
 
@@ -336,13 +383,13 @@ spilt_train_test(
 
 ### `predict` vs `advanced_predict`
 
-| | `predict` | `advanced_predict` |
-|---|---|---|
-| 绘图 | ultralytics 内置 | 自绘（OpenCV 矩形 + 文字背景块） |
-| 中文标签 | ❌ 不支持 | ✅ 传 `font_path` 即可 |
-| 类别名替换 | 需改模型 `names` | `replace_text={0: "裂缝"}` 整表替换 |
-| 存图位置 | `runs/detect/predict*/` | `./results/`（相对当前工作目录） |
-| 适用场景 | 快速看效果、标准出图 | 交付中文可视化结果、论文配图 |
+|       | `predict`               | `advanced_predict`            |
+| ----- | ----------------------- | ----------------------------- |
+| 绘图    | ultralytics 内置          | 自绘（OpenCV 矩形 + 文字背景块）         |
+| 中文标签  | ❌ 不支持                   | ✅ 传 `font_path` 即可            |
+| 类别名替换 | 需改模型 `names`            | `replace_text={0: "裂缝"}` 整表替换 |
+| 存图位置  | `runs/detect/predict*/` | `./results/`（相对当前工作目录）        |
+| 适用场景  | 快速看效果、标准出图              | 交付中文可视化结果、论文配图                |
 
 ### `export_model` — 模型导出
 
@@ -352,7 +399,7 @@ from tools import export_model
 export_model("./runs/detect/train/weights/best.pt", format="onnx")
 ```
 
-`format` 常用值：`onnx` / `torchscript` / `openvino` / `engine`（TensorRT，需匹配 CUDA 版本）。
+`format` 常用值：`onnx` / `torchscript` / `openvino` / `engine`（TensorRT，需匹配 CUDA 版本）。  
 产物与权重**同目录、同名、不同后缀**。
 
 ### `extract_frames` — 视频抽帧
@@ -373,6 +420,7 @@ result = extract_frames(
 # {'results': [...], 'failures': [...], 'out_root': Path, 'total_saved': 350}
 ```
 
+
 支持中文路径（内部走 `cv2.imencode` + `tofile`，规避 OpenCV 在 Windows 上的中文路径问题）。
 
 ### `systools` — 通用文件操作
@@ -386,6 +434,48 @@ files = fetch_specific_files("./imgs", file_type=("jpg", "png"))
 process_files("./src", "./dst", file_type="jpg", mode=0)   # mode=0 复制 / 1 删除
 add_suffix_to_files("./imgs", "_v2")           # a.jpg → a_v2.jpg（目标已存在则跳过）
 ```
+
+### `compare_metrics` — 训练指标对比可视化
+
+读 ultralytics 每次训练产出的 `results.csv`，把损失与验证指标画成曲线，支持多次实验叠加对比。适合记录消融实验、做论文配图。**只读 csv，不改动任何训练产物。**
+
+```python
+from tools import compare_metrics
+
+result = compare_metrics(
+    csv_paths="./runs/detect/mosaic 10",   # 传目录会自动递归找 results.csv
+    metrics=["mAP50-95", "mAP50"],         # 不给就是该 csv 里全部可用指标
+    last_n=10,
+    out_dir="figures",                     # 给了就落盘为 figures/metrics_compare.png
+    show=False,
+)
+print(result["mode"])                      # 'single'（单次训练曲线）/ 'multi'（横向对比）
+print(result["labels"])                    # 实际使用的图例名（重名会自动加 #2 后缀）
+print(result["stats"]["mAP50-95"])
+```
+
+返回结构：
+
+| 键 | 含义 |
+|---|---|
+| `mode` | `single` / `multi` |
+| `csv_paths` | 实际读到的 `results.csv` 路径列表 |
+| `labels` | 去重后的图例名 |
+| `metrics` | 解析出的 `Metric` 列表 |
+| `stats` | `{指标key: {图例名: {mean, std, best, n, start_epoch}}}` |
+| `curve_fig` | matplotlib `Figure`，便于二次加工 |
+
+指标选择（`metrics`）支持四种写法：
+
+| 写法 | 例子 |
+|---|---|
+| 编号 | `7` → mAP@0.5:0.95 |
+| key | `"mAP50-95"` |
+| 完整列名 | `"metrics/mAP50-95(B)"` |
+| 模糊子串（忽略大小写与分隔符） | `"map50"` |
+| 全部可用 | `None` |
+
+绘图行为：1 个指标单图，多指标自动排成子图网格（`1 / 2 / 3` 列）；多文件叠加时用 figure 级统一图例；`std_band=True` 额外叠加末 N epoch 均值参考线；配色用 Okabe-Ito 无障碍色板，中文字体从 8 种候选中自动挑第一个已安装的。
 
 ---
 
@@ -469,5 +559,15 @@ spilt_train_test(...)
 
 - `copy_files(verbose=...)`：为兼容旧调用保留，当前不产生输出。
 - `normalize_labels` 内部用 `text.index(tt)` 定位待改写列。若某行的**类别 ID 字符串恰好与某个 ≥1.0 的坐标值相同**（如一行形如 `1 1 0.5 0.2 0.1`），`index()` 会命中第 0 列的类别 ID 并被改写成 `0.99999`，导致该行类别被破坏。代码注释中已标注此风险，批量使用前建议先抽查。
+
+### 7. `compare_metrics` 的统计口径是「末 N 个 epoch」
+
+`last_n` 默认 10 而**不是全程**，因为 `close_mosaic` 之前的指标仍受 mosaic 增强扰动、波动很大，取末 N 轮更接近收敛值。`last_n=None` 会统计全程，**不推荐**——这也正是 `train()` 里 `close_mosaic=10` 与本模块默认口径能对上的原因。
+
+另外 `metrics=None` 会把该 csv 里所有可用指标全画出来（注册表共 15 个），子图网格按指标数自动排 1 / 2 / 3 列，指标多时图会偏大。
+
+### 8. `compare_metrics.py` 可以单独运行
+
+文件底部有 `if __name__ == "__main__"` 的 6 个用例（单文件曲线、多文件叠加、递归目录、编号选指标等），但里面的 `runs/detect/mosaic 10` 等路径是**硬编码的演示路径**，需自备 `results.csv` 才能跑通。该分支还依赖包名 `ObjectDetection` 可导入——若你把 `tools/` 改名或单独拷走，直接运行该文件会报导入错误，此时改用 `from tools.compare_metrics import compare_metrics` 调用即可。
 
 ---
