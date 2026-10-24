@@ -113,10 +113,14 @@ def print_config(
     print(f"  输出文件夹 : {out_root.resolve()}")
     print(f"  截帧间隔   : 每 {every_n_frames} 帧取 1 张")
     quality_info = (
-        f"（质量 {image_quality}）" if image_ext.lower() in ("jpg", "jpeg", "webp") else ""
+        f"（质量 {image_quality}）"
+        if image_ext.lower() in ("jpg", "jpeg", "webp")
+        else ""
     )
     print(f"  图片格式   : {image_ext.lower()}{quality_info}")
-    print(f"  目录结构   : {'所有图片同一文件夹' if flat_output else '每个视频一个子文件夹'}")
+    print(
+        f"  目录结构   : {'所有图片同一文件夹' if flat_output else '每个视频一个子文件夹'}"
+    )
     print(f"  文件前缀   : {'视频名_' if filename_prefix else '无'}")
     print(f"  递归搜索   : {'是' if recursive else '否'}")
     print(f"  视频数量   : {len(videos)}")

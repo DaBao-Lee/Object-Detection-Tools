@@ -23,7 +23,13 @@ def coco_to_txt(annotations_path: str, save_dir: str, use_segments=True) -> None
     if os.path.exists(save_dir):
         shutil.rmtree(save_dir)
 
-    convert_coco(annotations_path, save_dir=save_dir, use_segments=use_segments, lvis=False, cls91to80=True)
+    convert_coco(
+        annotations_path,
+        save_dir=save_dir,
+        use_segments=use_segments,
+        lvis=False,
+        cls91to80=True,
+    )
 
 
 def coco_txt_BaiDu(annotations_path: str, save_dir: str) -> None:
@@ -64,7 +70,7 @@ def coco_txt_BaiDu(annotations_path: str, save_dir: str) -> None:
                     continue
                 cls = ann["category_id"]
                 bboxes.append([cls] + box.tolist())
-            with open(os.path.join(save_dir, str(f).split('.')[0] + '.txt'), '+a') as t:
+            with open(os.path.join(save_dir, str(f).split(".")[0] + ".txt"), "+a") as t:
                 for bbox in bboxes:
                     t.write("%g " % bbox[0])
                     for i in bbox[1:]:
@@ -79,38 +85,50 @@ def voc_to_txt(annotations_path: str, save_dir: str, obj_dict: dict = None) -> N
     （必填，例如 {"wheel": 0, "handle": 1}），未覆盖的类别名会抛 KeyError。
     """
 
-    assert obj_dict is not None, '请输入对象名称与类别编号的字典'
+    assert obj_dict is not None, "请输入对象名称与类别编号的字典"
 
     if os.path.exists(save_dir):
         shutil.rmtree(save_dir)
     os.mkdir(save_dir)
 
-    xmls = glob.glob(os.path.join(annotations_path, '*.xml'))
+    xmls = glob.glob(os.path.join(annotations_path, "*.xml"))
     for xml_name in tqdm(xmls):
-        txt_name = os.path.basename(xml_name).replace('xml', 'txt')
-        f = open(os.path.join(save_dir, txt_name), '+w')
-        with open(xml_name, 'rb') as fp:
+        txt_name = os.path.basename(xml_name).replace("xml", "txt")
+        f = open(os.path.join(save_dir, txt_name), "+w")
+        with open(xml_name, "rb") as fp:
             xml = etree.HTML(fp.read())
-            width = int(xml.xpath('//size/width/text()')[0])
-            height = int(xml.xpath('//size/height/text()')[0])
+            width = int(xml.xpath("//size/width/text()")[0])
+            height = int(xml.xpath("//size/height/text()")[0])
 
-            obj = xml.xpath('//object')
+            obj = xml.xpath("//object")
             for each in obj:
                 name = each.xpath("./name/text()")[0]
                 classes = obj_dict[name]
-                xmin = int(each.xpath('./bndbox/xmin/text()')[0])
-                xmax = int(each.xpath('./bndbox/xmax/text()')[0])
-                ymin = int(each.xpath('./bndbox/ymin/text()')[0])
-                ymax = int(each.xpath('./bndbox/ymax/text()')[0])
+                xmin = int(each.xpath("./bndbox/xmin/text()")[0])
+                xmax = int(each.xpath("./bndbox/xmax/text()")[0])
+                ymin = int(each.xpath("./bndbox/ymin/text()")[0])
+                ymax = int(each.xpath("./bndbox/ymax/text()")[0])
 
                 # VOC 是绝对像素的左上 / 右下角，转中心点并归一化
                 dw = 1 / width
                 dh = 1 / height
                 x_center = (xmin + xmax) / 2
                 y_center = (ymax + ymin) / 2
-                w = (xmax - xmin)
-                h = (ymax - ymin)
+                w = xmax - xmin
+                h = ymax - ymin
                 x, y, w, h = x_center * dw, y_center * dh, w * dw, h * dh
 
-                f.write(str(classes) + ' ' + str(x) + ' ' + str(y) + ' ' + str(w) + ' ' + str(h) + ' ' + '\n')
+                f.write(
+                    str(classes)
+                    + " "
+                    + str(x)
+                    + " "
+                    + str(y)
+                    + " "
+                    + str(w)
+                    + " "
+                    + str(h)
+                    + " "
+                    + "\n"
+                )
         f.close()

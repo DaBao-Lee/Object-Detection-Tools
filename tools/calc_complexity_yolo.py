@@ -17,7 +17,7 @@ def calc_complexity_yolo(
         model_selection: .pt 权重路径
         imgsz: 输入尺寸（默认 640；320 用于分辨率消融线）
         fuse: 是否先做 Conv+BN 融合（默认 True，与验证 / 部署一致；
-              设为 False 则统计含独立 BN 的未融合模型）
+            设为 False 则统计含独立 BN 的未融合模型）
     Returns:
         {"model", "imgsz", "fuse", "params_M", "GFLOPs"}（参数量单位 M，计算量单位 GFLOPs，
         均保留 3 位小数后四舍五入）

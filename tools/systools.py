@@ -89,7 +89,6 @@ def ignore_something(mode: int = 0):
 
 
 def add_suffix_to_files(folder_path: str, suffix: str):
-
     """给文件夹内每个文件追加后缀（小尾巴），不改扩展名。
 
     只处理 folder_path 顶层文件，不递归子文件夹。注意：就地重命名，不可逆；

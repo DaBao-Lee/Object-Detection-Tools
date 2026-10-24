@@ -74,7 +74,6 @@ def normalize_labels(src_path: str) -> None:
 
 
 def _replace_labels_core(txt_path: str, origin_key, target_key: str, replace_all: bool):
-
     """替换核心：读文件 -> 逐行改写 -> 有变化才就地覆盖写。
 
     返回 (changed, replaced_count, matched)。异常不在此捕获，向上抛给调用方。
@@ -124,7 +123,6 @@ def _replace_labels_core(txt_path: str, origin_key, target_key: str, replace_all
 def replace_labels_with_target(
     txt_path: str, origin_id, target_id: int, warn_if_no_match: bool = False
 ):
-
     """把标签文件里「指定类别」每行的类别 ID 改为 target_id，保留坐标列。
 
     origin_id        : 要被替换的原始类别 ID；传字符串 "all"（不区分大小写）时替换所有类别。
@@ -166,7 +164,6 @@ def replace_labels_with_target(
 def batch_replace_labels(
     folder: str, origin_id, target_id: int, warn_if_no_match: bool = False
 ):
-
     """对文件夹下所有 .txt 标签批量执行类别 ID 替换（不递归子文件夹）。
 
     origin_id / target_id / warn_if_no_match 语义与 replace_labels_with_target 一致，
@@ -221,7 +218,9 @@ def batch_replace_labels(
         if not replace_all and matched == 0:
             no_match_files += 1
             if warn_if_no_match:
-                tqdm.write(f"⚠️ 未命中类别 {origin_id}：{filename} 中没有任何该类别标签")
+                tqdm.write(
+                    f"⚠️ 未命中类别 {origin_id}：{filename} 中没有任何该类别标签"
+                )
 
     return {
         "total": len(txt_files),
@@ -234,7 +233,6 @@ def batch_replace_labels(
 def collect_images(
     root: Path, recursive: bool, image_exts: set | None = None
 ) -> list[Path]:
-
     """收集 root 下所有图片文件，返回排序后的路径列表。"""
 
     exts = IMAGE_EXTS if image_exts is None else image_exts
@@ -252,7 +250,6 @@ def fill_empty_labels(
     verbose: bool = False,
     image_exts: set | None = None,
 ) -> dict:
-
     """为缺失标签的图片生成空标签文件（YOLO 背景图常用）。
 
     参数
@@ -380,7 +377,6 @@ def fill_empty_labels(
 
 
 def _count_txt(path: Path) -> Counter:
-
     """统计 YOLO txt 标签：每行首列即类别 ID。
 
     只跳过空行，不校验列数——计数场景下"这行属于哪个类别"和坐标是否合法无关。
@@ -396,7 +392,6 @@ def _count_txt(path: Path) -> Counter:
 
 
 def _count_xml(path: Path) -> Counter:
-
     """统计 VOC xml 标签：每个 object 计一次数，类别取 name（缺失时退到 label）。
 
     标签名比较会忽略命名空间前缀；确实取不到类别名的 object 直接跳过，不计入任何类别。
@@ -423,18 +418,18 @@ def _count_xml(path: Path) -> Counter:
 
 
 def _display_width(text) -> int:
-
     """按终端显示宽度算长度：CJK / 全角字符占 2 列。
 
     类名是中文时，len() 会把"裂缝"算成 2 而终端占 4 列，
     直接用 len() 对齐会让表格错位。
     """
 
-    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in str(text))
+    return sum(
+        2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in str(text)
+    )
 
 
 def _apply_names(key: str, names) -> str:
-
     """把类别 ID 映射成 "ID:名称" 展示；没给映射表或未收录时原样返回。
 
     映射表的键可能是 int（yaml 加载的 names）也可能是 str（手写的 dict），两种都认。
@@ -458,7 +453,6 @@ def count_labels(
     names: dict | None = None,
     verbose: bool = False,
 ) -> dict:
-
     """统计标签文件夹里各类别的标注数量，支持 YOLO txt 与 VOC xml。
 
     注意：txt 统计出来的是类别 ID（"0"、"1"…），xml 统计出来的是类别名（"car"…）。

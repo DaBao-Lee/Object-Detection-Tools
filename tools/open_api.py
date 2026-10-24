@@ -189,9 +189,7 @@ class OpenAPI:
             except json.JSONDecodeError:
                 continue
 
-            content = (
-                chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-            )
+            content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
             if content:
                 yield content
 

@@ -57,6 +57,6 @@ def train(
         plots=plots,  # 是否画结果图
         cos_lr=cos_lr,  # 余弦退火学习率
         iou=iou,  # NMS IoU 阈值
-        mosaic = mosaic, # 增强概率
+        mosaic=mosaic,  # 增强概率
         close_mosaic=close_mosaic,  # mosaic 图像增强技术
     )

@@ -217,12 +217,16 @@ def spilt_train_test(
     """
 
     path = li_path
-    
-    if not os.path.exists(train_img_path): os.makedirs(train_img_path)
-    if not os.path.exists(val_img_path): os.makedirs(val_img_path)
-    if not os.path.exists(train_label_path): os.makedirs(train_label_path)
-    if not os.path.exists(val_label_path): os.makedirs(val_label_path)
-    
+
+    if not os.path.exists(train_img_path):
+        os.makedirs(train_img_path)
+    if not os.path.exists(val_img_path):
+        os.makedirs(val_img_path)
+    if not os.path.exists(train_label_path):
+        os.makedirs(train_label_path)
+    if not os.path.exists(val_label_path):
+        os.makedirs(val_label_path)
+
     random.seed(random_state)  # 固定种子，保证划分可复现
 
     if isinstance(li_path, str):
