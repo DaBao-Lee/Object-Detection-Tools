@@ -1,6 +1,6 @@
 # Object-Detection-Tools
 
-一个**独立、通用的目标检测工程工具包**，基于 **Ultralytics YOLO**。不依赖任何特定项目，把 `tools/` 目录放进你的工程，用 `from tools import ...` 按需调用。覆盖从**视频抽帧 → 标注格式转换 → 标签治理 → 数据集划分 → 训练 → 验证 → 推理 → 模型导出 → 训练指标对比**的完整链路。
+一个**独立、通用的目标检测工程工具包**，基于 **Ultralytics YOLO**。不依赖任何特定项目，把 `tools/` 目录放进你的工程，用 `from tools import ...` 按需调用。覆盖从**视频抽帧 → 标注格式转换 → 标签治理 → 数据集划分 → 训练 → 验证 → 推理 → 模型导出 → 复杂度统计 → 训练指标对比 → 视觉大模型报告**的完整链路。
 
 ---
 
@@ -9,12 +9,12 @@
 Python ≥ 3.9（开发环境为 3.12 / 3.13）。
 
 ```bash
-pip install ultralytics opencv-python numpy pillow tqdm lxml matplotlib pandas
+pip install ultralytics opencv-python numpy pillow tqdm lxml matplotlib pandas requests
 ```
 
 | 依赖              | 用途                                   | 涉及模块                                       |
 | --------------- | ------------------------------------ | ------------------------------------------ |
-| `ultralytics`   | YOLO / YOLOWorld 训练、验证、推理、导出、COCO 转换 | `train` `val` `predict` `export` `convert` |
+| `ultralytics`   | YOLO / YOLOWorld 训练、验证、推理、导出、COCO 转换 | `train` `val` `predict` `export` `convert` `calc_complexity_yolo` |
 | `opencv-python` | 图像读写、画框、显示、视频解码                      | `predict` `video`                          |
 | `numpy`         | 坐标数组运算                               | `predict` `convert`                        |
 | `pillow`        | 中文文本绘制、ICC 配置处理、图片收集                 | `predict` `preprocess`                     |
@@ -22,6 +22,7 @@ pip install ultralytics opencv-python numpy pillow tqdm lxml matplotlib pandas
 | `lxml`          | VOC XML 解析                           | `convert`                                  |
 | `matplotlib`    | 训练曲线绘制、中文字体与论文白底样式           | `compare_metrics`                          |
 | `pandas`        | `results.csv` 读取与统计计算                | `compare_metrics`                          |
+| `requests`      | 调用 OpenAI 兼容的视觉大模型接口              | `open_api`（**惰性导入**，不装也不影响其它模块）      |
 
 ---
 
@@ -41,9 +42,11 @@ ObjectDetection/
     ├── predict.py           # 推理（内置绘图 / 自绘中文标签两套）
     ├── export.py            # 模型导出（ONNX / TensorRT / OpenVINO …）
     ├── model_utils.py       # 训练产物定位（best.pt / last.pt）
+    ├── calc_complexity_yolo.py  # 模型复杂度统计（参数量 / GFLOPs）
     ├── compare_metrics.py   # 训练指标对比可视化（results.csv → 曲线 / 统计）
     ├── systools.py          # 通用文件操作（建目录、复制、删除、批量重命名）
-    └── video.py             # 视频抽帧（单文件 / 批量 / 递归）
+    ├── video.py             # 视频抽帧（单文件 / 批量 / 递归）
+    └── open_api.py          # 视觉大模型接口调用（OpenAI 兼容 / 流式 / 多模态）
 ```
 
 ---
@@ -95,13 +98,23 @@ ObjectDetection/
 | 模块               | 函数                    | 作用                                                                   |
 | ---------------- | --------------------- | -------------------------------------------------------------------- |
 | `train.py`       | `train`               | YOLO 训练封装，暴露 epochs / batch / imgsz / optimizer / iou / mosaic 等常用超参 |
-| `val.py`         | `evaluate`            | 在数据集上验证模型，返回 ultralytics 指标                                          |
+| `val.py`         | `evaluate`            | 在数据集上验证模型，返回 ultralytics 指标；`rect` 口径见[注意点 9](#9-验证的-rect-口径不可混用) |
 | `predict.py`     | `predict`             | 用 ultralytics 内置绘图推理，可 `show` 弹窗 / `save` 存盘                         |
 | `predict.py`     | `advanced_predict`    | **自绘检测框**，支持中文字体与类别名整表替换                                             |
 | `predict.py`     | `add_pillow_text`     | 在图像数组上写文本（走 Pillow，解决 OpenCV 不支持中文）                                  |
 | `predict.py`     | `get_infer_data`      | 按 `IMAGE`（随机抽样）/ `DIR`（整目录）取推理数据                                     |
 | `export.py`      | `export_model`        | 导出 ONNX / TensorRT / OpenVINO / TorchScript                          |
 | `model_utils.py` | `get_best_last_model` | 从训练产物中定位 `best.pt` / `last.pt`                                       |
+| `calc_complexity_yolo.py` | `calc_complexity_yolo` | 统计模型参数量（M）与计算量（GFLOPs），`fuse` 控制是否 BN 折叠 |
+
+### 🤖 视觉大模型接口 — `open_api.py`
+
+| 函数 | 作用 |
+|---|---|
+| `OpenAPI` | OpenAI 兼容接口的流式对话客户端，支持**图文多模态**输入 |
+| `chat_stream` | 函数式入口：一次调用拿到完整回复文本（后端生成报告常用） |
+| `getSystemPrompt` | 读取 system prompt 文本文件 |
+| `DEFAULT_SYSTEM_PROMPT` | 未指定 system prompt 时的默认文案 |
 
 ### 📈 训练指标对比 — `compare_metrics.py`
 
@@ -270,6 +283,10 @@ metrics = evaluate("./runs/detect/train/weights/best.pt", "./datasets/data.yaml"
 # 定位权重
 best = get_best_last_model(mode=0)      # mode=0 → best.pt；mode=1 → last.pt
 
+# 复杂度统计（论文里的 Params / FLOPs）
+stats = calc_complexity_yolo(best, imgsz=640)
+print(stats["params_M"], stats["GFLOPs"])   # e.g. 2.590 8.700
+
 # 推理（自绘框 + 中文标签）
 advanced_predict(
     model_selection=best,
@@ -309,6 +326,36 @@ result = compare_metrics(
     show=False,
 )
 print(result["stats"]["mAP50-95"]["Ours"])   # {'mean':…, 'std':…, 'best':…, 'n':…, 'start_epoch':…}
+```
+
+### 7️⃣ 视觉大模型生成病害描述报告
+
+检测框结果转 base64 data-url，交给本地 llama.cpp / vLLM 之类的 OpenAI 兼容视觉模型出文字报告。
+
+```python
+from tools import chat_stream, getSystemPrompt
+
+report = chat_stream(
+    api_url="http://127.0.0.1:8080/v1/chat/completions",
+    api_key="",                        # 本地服务一般留空
+    model="Qwen2.5-VL-7B",
+    provider="LLAMA.CPP",
+    prompt="请描述图中的桥梁病害位置与严重程度。",
+    image_prompt="data:image/jpeg;base64,...",
+    systemPrompt=getSystemPrompt("./systemPrompt.txt"),
+)
+print(report)
+```
+
+需要流式逐字输出时改用类接口：
+
+```python
+from tools import OpenAPI, getSystemPrompt
+
+agent = OpenAPI("http://127.0.0.1:8080/v1/chat/completions", "", "Qwen2.5-VL-7B", "LLAMA.CPP")
+gen = agent.openAPIRequest("描述病害", image_prompt=data_url,
+                            systemPrompt=getSystemPrompt("./systemPrompt.txt"))
+text = agent.parseGenerator(gen, show=True)   # show=True 同时逐块打印
 ```
 
 ---
@@ -434,6 +481,60 @@ files = fetch_specific_files("./imgs", file_type=("jpg", "png"))
 process_files("./src", "./dst", file_type="jpg", mode=0)   # mode=0 复制 / 1 删除
 add_suffix_to_files("./imgs", "_v2")           # a.jpg → a_v2.jpg（目标已存在则跳过）
 ```
+
+### `calc_complexity_yolo` — 模型复杂度统计
+
+论文里报 Params / FLOPs 的标准口径（ultralytics 官方 `model.info()`）。
+
+```python
+from tools import calc_complexity_yolo
+
+r = calc_complexity_yolo("./runs/detect/train/weights/best.pt", imgsz=640, fuse=True)
+print(r["params_M"], r["GFLOPs"])
+```
+
+| 参数 | 说明 |
+|---|---|
+| `model_selection` | `.pt` 权重路径 |
+| `imgsz` | 输入尺寸，默认 640（320 用于分辨率消融线） |
+| `fuse` | 是否先做 Conv+BN 融合。**默认 True**，与验证 / 部署口径一致；设 False 则统计含独立 BN 的未融合模型 |
+
+返回：`{"model", "imgsz", "fuse", "params_M", "GFLOPs"}`（保留 3 位小数）。
+
+### `open_api` — 视觉大模型接口调用
+
+封装 OpenAI 兼容的 `/v1/chat/completions`（本地 llama.cpp、vLLM、在线服务均可），支持**图文多模态**输入与**流式**输出。
+
+```python
+from tools import OpenAPI, chat_stream, getSystemPrompt
+
+# 方式一：函数式，一次拿完整文本
+text = chat_stream(
+    api_url="http://127.0.0.1:8080/v1/chat/completions",
+    api_key="",
+    model="Qwen2.5-VL-7B",
+    provider="LLAMA.CPP",
+    prompt="描述这张图里的病害。",
+    image_prompt=data_url,               # 传 base64 data-url 走多模态分支
+    systemPrompt=getSystemPrompt("./systemPrompt.txt"),
+)
+
+# 方式二：类接口，流式逐块拿
+agent = OpenAPI(api_url, api_key, model, provider)
+gen = agent.openAPIRequest(prompt, image_prompt=data_url, systemPrompt=sp)
+text = agent.parseGenerator(gen, show=True)
+```
+
+| 成员 | 说明 |
+|---|---|
+| `OpenAPI.__init__` | 四个参数全为必填：`specific_api_url` / `specific_api_key` / `model` / `provider`，不做「留空即推导」 |
+| `headerCreate()` | 构造请求头；`api_key` 非空时才附带 `Authorization: Bearer ...` |
+| `playLoadCreate()` | 组装 payload；`image_prompt` 为 `None` 走纯文本分支，否则走图文多模态分支 |
+| `openAPIRequest()` | 发请求并**逐块 yield** 文本增量（生成器，请求在首次迭代时才真正发出） |
+| `parseGenerator(gen, show)` | 把流式生成器收成完整字符串；`show=True` 同时逐块打印 |
+| `getSystemPrompt(path)` | 读取 system prompt 文本文件 |
+
+> `requests` 在本模块内是**惰性导入**——只有真正发请求时才 import，所以没装 `requests` 也不影响 `from tools import ...` 其余功能，调用时会给出明确的 `ImportError` 提示。
 
 ### `compare_metrics` — 训练指标对比可视化
 
@@ -569,5 +670,25 @@ spilt_train_test(...)
 ### 8. `compare_metrics.py` 可以单独运行
 
 文件底部有 `if __name__ == "__main__"` 的 6 个用例（单文件曲线、多文件叠加、递归目录、编号选指标等），但里面的 `runs/detect/mosaic 10` 等路径是**硬编码的演示路径**，需自备 `results.csv` 才能跑通。该分支还依赖包名 `ObjectDetection` 可导入——若你把 `tools/` 改名或单独拷走，直接运行该文件会报导入错误，此时改用 `from tools.compare_metrics import compare_metrics` 调用即可。
+
+### 9. 验证的 `rect` 口径不可混用
+
+`evaluate()` 的 `rect` 参数默认 `True`（= 训练日志口径），但同一个权重两种口径能差约 **0.040** mAP50-95：
+
+| `rect` | YOLO11n 实测 mAP50-95 | 适用 |
+|---|---|---|
+| `True` | 0.7061（= 训练日志口径） | **同一框架内多模型横向对比** |
+| `False` | 0.6656 | **跨框架对比**（如 YOLO vs NanoDet，NanoDet 无 rect 机制） |
+
+`rect=True` 按宽高分组、每维向上取整到 stride(32) 倍数（640→672）；图片若全为正方形，走 `model.predict()` 的自建评测必然低报约 0.04。**跨表引用数字时务必标口径**（如「0.7061 (rect=True)」）。
+
+⚠️ `rect=False` 不能用「输入改成 672」替代——实测 F640=0.6523 → F672=0.6519，几乎无变化，离 `rect=True` 的 0.7083 仍差 0.056，resize 补不回这个差。
+
+### 10. `open_api` 的两个惰性行为
+
+- `requests` **惰性导入**：只有真正发请求时才 import，未装 `requests` 不影响 `from tools import ...` 其余功能，调用时抛带 `pip install requests` 提示的 `ImportError`。
+- `openAPIRequest()` 是**生成器**：函数体在第一次迭代（`next()`）时才执行，因此创建生成器对象本身不会发起网络请求。请求异常也会推迟到迭代时才抛出。
+
+另外 `getSystemPrompt()` 用 `"\n".join(readlines())` 拼接，**行尾换行符会被保留**，故相邻两行之间会多出一个空行——这是沿用巡检小车原实现的语义，system prompt 内容不受影响。
 
 ---

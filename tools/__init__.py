@@ -2,11 +2,13 @@
 
 convert 标注转换 · preprocess 数据清洗与标签治理 · dataset 数据集划分 · train 训练 ·
 val 验证 · predict 推理 · export 导出 · model_utils 权重定位 ·
-compare_metrics 训练指标对比可视化 · systools 通用文件操作 · video 视频抽帧。
+calc_complexity_yolo 模型复杂度统计 · compare_metrics 训练指标对比可视化 ·
+systools 通用文件操作 · video 视频抽帧 · open_api 视觉大模型接口调用。
 
 注意：部分函数带删除 / 覆盖 / 重命名语义，调用前确认路径并备份原始数据。
 """
 
+from .calc_complexity_yolo import calc_complexity_yolo
 from .convert import coco_txt_BaiDu, coco_to_txt, voc_to_txt
 from .compare_metrics import (
     METRICS,
@@ -31,6 +33,7 @@ from .dataset import (
 )
 from .export import export_model
 from .model_utils import get_best_last_model
+from .open_api import DEFAULT_SYSTEM_PROMPT, OpenAPI, chat_stream, getSystemPrompt
 from .predict import (
     InferDataType,
     add_pillow_text,
@@ -71,6 +74,7 @@ __all__ = [
     "get_best_last_model",
     "InferDataType",
     "get_infer_data",
+    "calc_complexity_yolo",
     # 训练指标对比可视化
     "compare_metrics",
     "list_metrics",
@@ -111,4 +115,9 @@ __all__ = [
     "add_suffix_to_files",
     # 视频抽帧
     "extract_frames",
+    # 视觉大模型接口调用
+    "OpenAPI",
+    "chat_stream",
+    "getSystemPrompt",
+    "DEFAULT_SYSTEM_PROMPT",
 ]

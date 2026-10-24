@@ -37,7 +37,9 @@ def coco_txt_BaiDu(annotations_path: str, save_dir: str) -> None:
     os.mkdir(save_dir)
 
     for file in os.listdir(annotations_path):
-        js = json.load(open(os.path.join(annotations_path, file)))
+        # 显式指定 utf-8：Windows 默认编码可能是 GBK，含中文的标注 json 会解析失败
+        with open(os.path.join(annotations_path, file), encoding="utf-8") as fp:
+            js = json.load(fp)
         images = {f'{x["id"]:d}': x for x in js["images"]}
 
         # 按 image_id 分组，避免每张图重复扫描整个标注列表
