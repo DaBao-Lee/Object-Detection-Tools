@@ -1,4 +1,4 @@
-"""ObjectDetection —— 无人车巡检 / 桥梁裂缝检测 工程工具包。
+"""ObjectDetection —— 检测工具包
 
 convert 标注转换 · preprocess 数据清洗与标签治理 · dataset 数据集划分 · train 训练 ·
 val 验证 · predict 推理 · export 导出 · model_utils 权重定位 ·
