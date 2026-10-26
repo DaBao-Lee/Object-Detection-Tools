@@ -353,5 +353,5 @@ def extract_frames(
 
 
 # 用法示例：
-#     from tools import extract_frames
+#     from ObjectDetection import extract_frames
 #     extract_frames("./datasets/样例视频", "./datasets/样例视频/frames", every_n_frames=10)

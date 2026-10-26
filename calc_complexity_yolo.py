@@ -1,10 +1,3 @@
-"""YOLO 模型复杂度统计：参数量（M）与计算量（GFLOPs）。
-
-calc_complexity_yolo  读 .pt 权重，输出参数量与计算量（ultralytics 官方口径）
-
-注：依赖 ultralytics，仅需 import 本模块即可使用，无需整套 tools 依赖。
-"""
-
 from ultralytics import YOLO
 
 
@@ -15,12 +8,10 @@ def calc_complexity_yolo(
 
     Args:
         model_selection: .pt 权重路径
-        imgsz: 输入尺寸（默认 640；320 用于分辨率消融线）
-        fuse: 是否先做 Conv+BN 融合（默认 True，与验证 / 部署一致；
-            设为 False 则统计含独立 BN 的未融合模型）
+        imgsz: 输入尺寸（默认 640）
+        fuse: 是否先做 Conv+BN 融合（默认 True,与验证 / 部署一致 设为 False 则统计含独立 BN 的未融合模型）
     Returns:
-        {"model", "imgsz", "fuse", "params_M", "GFLOPs"}（参数量单位 M，计算量单位 GFLOPs，
-        均保留 3 位小数后四舍五入）
+        {"model", "imgsz", "fuse", "params_M", "GFLOPs"}（参数量单位 M,计算量单位 GFLOPs,均保留 3 位小数后四舍五入）
     """
 
     model = YOLO(model_selection)
@@ -28,16 +19,16 @@ def calc_complexity_yolo(
     if fuse:
         model.model.fuse()  # BN 折叠进 Conv：参数 / 计算量与验证、部署一致
 
-    n_layers, n_params, n_grads, gflops = model.info(verbose=True)
+    n_layers, n_params, n_grads, gflops = model.info(verbose=True, imgsz=imgsz)
 
     params_m = n_params / 1e6
 
     print("\n" + "=" * 54)
-    print("  YOLO 复杂度（ultralytics 官方口径，FLOPs = 2×MACs）")
+    print("  YOLO 复杂度（ultralytics 官方口径,FLOPs = 2×MACs）")
     print("=" * 54)
     print(f"  权重     : {model_selection}")
     print(f"  输入尺寸 : {imgsz} × {imgsz}")
-    print(f"  fuse     : {fuse}（True=BN折叠，与验证/部署一致）")
+    print(f"  fuse     : {fuse}（True=BN折叠,与验证/部署一致）")
     print(f"  层数     : {n_layers:,}")
     print(f"  参数量   : {params_m:.3f} M   ({n_params:,})")
     print(f"  计算量   : {gflops:.3f} GFLOPs")

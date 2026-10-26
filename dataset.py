@@ -173,7 +173,7 @@ def split_meta(
                 pass
 
 
-def collcet_meta(
+def collect_meta(
     meta_split_path: str = "./meta_split_results", save: bool = False
 ) -> list:
     """收集 split_meta 各子目录下的所有文件路径；save=True 时另复制一份到 ./meta。"""

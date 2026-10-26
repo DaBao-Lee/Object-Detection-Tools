@@ -22,25 +22,42 @@ class InferDataType(Enum):
     DIR = "dir"
 
 
+# 推理可接受的图片扩展名（大小写不敏感）
+IMAGE_EXTS = (".jpg", ".jpeg", ".jpe", ".png", ".bmp", ".tif", ".tiff", ".webp")
+
+
+def _collect_images(directory: str, recursive: bool = False) -> list:
+    """收集目录下的图片路径，按扩展名后缀过滤，可选递归子目录。"""
+
+    pattern = (
+        os.path.join(directory, "**", "*")
+        if recursive
+        else os.path.join(directory, "*")
+    )
+    return sorted(
+        path
+        for path in glob.glob(pattern, recursive=recursive)
+        if os.path.splitext(path)[1].lower() in IMAGE_EXTS
+    )
+
+
 def get_infer_data(
-    path_dir: str, typing: InferDataType = InferDataType.IMAGE, max_num: int = 5
+    path_dir: str,
+    typing: InferDataType = InferDataType.IMAGE,
+    max_num: int = 5,
+    recursive: bool = False,
 ):
     """按类型取推理数据，返回图片路径列表（IMAGE 为随机抽样，上限 max_num）。
 
-    注意：文件筛选用的是子串匹配（"jpg" in x），路径含 jpg/png/jpeg 字样就会被纳入。
+    按扩展名后缀判断图片（大小写不敏感）；recursive=True 时递归搜索子目录。
     """
 
-    imgs = [
-        x
-        for x in glob.glob(os.path.join(path_dir, "*.*"))
-        if "jpg" in x or "png" in x or "jpeg" in x
-    ]
+    imgs = _collect_images(path_dir, recursive=recursive)
 
     if typing == InferDataType.IMAGE:
-        return random.sample(list(imgs), min(max_num, len(imgs)))
+        return random.sample(imgs, min(max_num, len(imgs)))
 
-    elif typing == InferDataType.DIR:
-        return imgs
+    return imgs
 
 
 def predict(
@@ -121,8 +138,8 @@ def advanced_predict(
 ):
     """自绘检测框与标签的预测。
 
-    font_path 给中文字体路径即可显示中文；replace_text 可整表替换类别名，例如 {0: '裂缝'}。
-    save=True 时存到 ./results/（相对当前工作目录）；show=True 时每张图都会阻塞等待按键。
+    font_path 给中文字体路径即可显示中文；replace_text 按 ID 覆盖类别名（未给出的沿用模型名称），
+    例如 {0: '裂缝'}。save=True 时存到 ./results/（相对当前工作目录）；show=True 时每张图都会阻塞等待按键。
     """
 
     if yolo_world:
@@ -130,19 +147,15 @@ def advanced_predict(
     else:
         model = YOLO(model_selection)
 
-    # 传目录时展开为其中的所有图片
-    if isinstance(img_path, str) and not img_path.endswith((".jpg", ".png", ".jpeg")):
-        img_path = [
-            file
-            for x in ["jpg", "png", "jpeg"]
-            for file in glob.glob(os.path.join(img_path, f"*.{x}"))
-        ]
+    # 传目录时展开为其中的所有图片；单文件（任意扩展名 / 大小写）原样交给模型
+    if isinstance(img_path, str) and os.path.isdir(img_path):
+        img_path = _collect_images(img_path)
 
     results = model(img_path, conf=conf, show=False, save=False, verbose=False, iou=iou)
     for result in results:
         names = result.names
-        if replace_text is not None:
-            names = replace_text
+        if replace_text:
+            names = {**names, **replace_text}
         boxes = result.boxes
         orig_img = result.orig_img
         path = result.path
@@ -188,6 +201,5 @@ def advanced_predict(
             cv2.waitKey(0)
             cv2.destroyAllWindows()
         if save:
-            if not os.path.exists("results"):
-                os.mkdir("./results")
+            os.makedirs("results", exist_ok=True)
             cv2.imwrite(os.path.join("results", os.path.basename(path)), orig_img)

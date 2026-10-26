@@ -1,4 +1,4 @@
-"""tools —— 无人车巡检 / 桥梁裂缝检测 工程工具包。
+"""ObjectDetection —— 无人车巡检 / 桥梁裂缝检测 工程工具包。
 
 convert 标注转换 · preprocess 数据清洗与标签治理 · dataset 数据集划分 · train 训练 ·
 val 验证 · predict 推理 · export 导出 · model_utils 权重定位 ·
@@ -25,7 +25,7 @@ from .compare_metrics import (
 )
 from .dataset import (
     check_and_copy_missing_files,
-    collcet_meta,
+    collect_meta,
     copy_files,
     rm_files,
     spilt_train_test,
@@ -97,7 +97,7 @@ __all__ = [
     "check_and_copy_missing_files",
     "rm_files",
     "split_meta",
-    "collcet_meta",
+    "collect_meta",
     "spilt_train_test",
     # 标签治理
     "IMAGE_EXTS",

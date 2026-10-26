@@ -5,11 +5,11 @@ getSystemPrompt  读取 system prompt 文本文件
 chat_stream    一次性拿到完整回复文本的函数式入口
 
 依赖 `requests` 为**惰性导入**：仅在真正发请求时才 import，因此
-`from tools import OpenAPI` 在未装 requests 的环境也能成功（只是调用时会报错）。
+`from ObjectDetection import OpenAPI` 在未装 requests 的环境也能成功（只是调用时会报错）。
 
 典型用法（本地 llama.cpp 服务）：
 
-    from tools import OpenAPI, getSystemPrompt
+    from ObjectDetection import OpenAPI, getSystemPrompt
 
     agent = OpenAPI(
         "http://127.0.0.1:8080/v1/chat/completions",

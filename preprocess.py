@@ -53,24 +53,35 @@ def rm_icc_profile(src_path: str) -> None:
 
 
 def normalize_labels(src_path: str) -> None:
-    """把标签坐标夹紧到 1.0 以内（>= 1.0 的改写为 0.99999）。注意：就地覆盖写，不可逆。"""
+    """把标签坐标夹紧到 1.0 以内（>= 1.0 的改写为 0.99999）。注意：就地覆盖写，不可逆。
 
-    src_path = glob.glob(os.path.join(src_path, "*.txt"))
-    for path in tqdm(src_path):
-        f = open(path, "r")
-        texts = f.readlines()
-        f.close()
-        with open(path, "+w") as t:
-            for text in texts:
-                text = text.split()
-                for tt in text[1:]:  # 跳过第 0 列的类别 id
-                    if float(tt) >= 1.0:
-                        # 原实现用 list.index 定位，同行有重复数值时可能替换错列
-                        text[text.index(tt)] = "0.99999"
-                t.write(text[0] + " ")
-                for tt in text[1:]:
-                    t.write("%g " % float(tt))
-                t.write("\n")
+    逐列检查坐标（跳过类别列），未越界的值保持原文本，不再统一格式化；
+    空行与非数值列原样保留。
+    """
+
+    for path in tqdm(glob.glob(os.path.join(src_path, "*.txt"))):
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        new_lines = []
+        changed = False
+        for line in lines:
+            parts = line.split()
+            if not parts:
+                new_lines.append(line)
+                continue
+            for i in range(1, len(parts)):  # 第 0 列是类别 id，不参与坐标夹紧
+                try:
+                    if float(parts[i]) >= 1.0:
+                        parts[i] = "0.99999"
+                        changed = True
+                except ValueError:
+                    continue  # 非数值列原样保留
+            new_lines.append(" ".join(parts) + "\n")
+
+        if changed:
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
 
 
 def _replace_labels_core(txt_path: str, origin_key, target_key: str, replace_all: bool):
@@ -575,7 +586,7 @@ def count_labels(
 
 
 # 用法示例：
-#     from tools import count_labels, fill_empty_labels, replace_labels_with_target
+#     from ObjectDetection import count_labels, fill_empty_labels, replace_labels_with_target
 #     count_labels("./datasets/xxx/labels")                      # 统计 txt + xml
 #     count_labels("./datasets/xxx/labels", recursive=True)      # 含子文件夹
 #     count_labels("./datasets/xxx/labels", label_exts=(".xml",))  # 只统计 xml
