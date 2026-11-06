@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from ultralytics import YOLO
-from .model_utils import get_best_last_model
+from ObjectDetection import get_best_last_model
 
 # ---------------------------------------------------------------- 工具函数
 
@@ -138,6 +138,16 @@ def draw_detections(
     return cv2.cvtColor(np.asarray(pil), cv2.COLOR_RGB2BGR)
 
 
+def parse_size(reshape_size) -> tuple:
+    """把 reshape_size 统一成 (宽, 高)；None 表示不缩放。"""
+
+    if reshape_size is None:
+        return None
+    if isinstance(reshape_size, (tuple, list)):
+        return int(reshape_size[0]), int(reshape_size[1])
+    return int(reshape_size), int(reshape_size)
+
+
 def save_with_dpi(image_bgr: np.ndarray, out_path: str, dpi: int = 300) -> str:
     """按指定 DPI 保存图片（PNG 无损，带 dpi 元数据）。"""
 
@@ -159,7 +169,8 @@ def predict_high_dpi(
     output_dir: str = DEFAULT_OUTPUT,
     conf: float = 0.25,
     iou: float = 0.7,
-    imgsz: int = 640,
+    imgsz: int = None,
+    reshape_size: Union[int, tuple] = None,
     dpi: int = 300,
     # ---- 外观调节 ----
     font_weight: str = DEFAULT_FONT_WEIGHT,
@@ -181,7 +192,11 @@ def predict_high_dpi(
     output_dir  输出文件夹，默认 outputs
     conf        置信度阈值
     iou         NMS IoU 阈值
-    imgsz       推理输入边长
+    imgsz       推理输入边长，默认 640；不受 reshape_size 影响
+    reshape_size
+                预测完成后把结果图缩放到该尺寸，框坐标同步换算。
+                传 int 为正方形（如 320），传 (宽, 高) 可指定非正方形；None = 不缩放。
+                框和标签是在缩放后的尺度上画的，所以文字不会被缩糊
     dpi         输出图片 DPI 元数据
 
     外观调节：
@@ -202,27 +217,35 @@ def predict_high_dpi(
         print(f"[error] 没有找到图片：{source}")
         return []
 
+    target = parse_size(reshape_size)
+    # 推理仍在原图（imgsz 默认 640）上做，保证小目标检出率；reshape_size 只作用于输出
+    eff_imgsz = imgsz or 640
+
     os.makedirs(output_dir, exist_ok=True)
     saved = []
     font_path = resolve_font_path(font_weight)
 
-    # stream=True 逐张出结果，避免一次性把整批图读进内存
-    results = model.predict(
-        source=paths,
-        conf=conf,
-        iou=iou,
-        imgsz=imgsz,
-        stream=True,
-        verbose=False,
-        save=False,
-    )
+    def render(result, src_path: str):
+        """把单张结果画出来并按 dpi 存盘。"""
 
-    for result in results:
         canvas = result.orig_img.copy()
         h, w = canvas.shape[:2]
-        short = min(h, w)
 
-        # 字号 / 线宽：给了就用给的，否则按图幅自适应
+        # 输出尺寸：reshape_size 优先，再乘 scale
+        tw, th = target if target else (w, h)
+        tw = int(round(tw * scale))
+        th = int(round(th * scale))
+
+        # 先把底图缩放到输出尺寸，框坐标随后按同一比例换算，
+        # 这样标签是直接画在输出尺度上的，文字不会被缩放糊掉
+        if (tw, th) != (w, h):
+            interp = cv2.INTER_AREA if tw * th < w * h else cv2.INTER_CUBIC
+            canvas = cv2.resize(canvas, (tw, th), interpolation=interp)
+
+        sx, sy = tw / w, th / h
+        short = min(tw, th)
+
+        # 字号 / 线宽：给了就用给的，否则按输出图幅自适应
         cur_font_size = font_size if font_size else max(16, int(short * 0.042))
         cur_box_width = box_width if box_width else max(2, int(round(short / 180)))
 
@@ -232,11 +255,11 @@ def predict_high_dpi(
             clss = result.boxes.cls.cpu().numpy()
             confs = result.boxes.conf.cpu().numpy()
             for (x1, y1, x2, y2), c, cf in zip(xyxy, clss, confs):
-                # 坐标裁回画布，并按 scale 放大
-                x1 = int(max(0, x1) * scale)
-                y1 = int(max(0, y1) * scale)
-                x2 = int(min(w, x2) * scale)
-                y2 = int(min(h, y2) * scale)
+                # 先裁回原图范围，再换算到输出尺度
+                x1 = int(max(0, min(w, x1)) * sx)
+                y1 = int(max(0, min(h, y1)) * sy)
+                x2 = int(max(0, min(w, x2)) * sx)
+                y2 = int(max(0, min(h, y2)) * sy)
                 ci = int(c)
                 name = (
                     class_names[ci]
@@ -244,14 +267,6 @@ def predict_high_dpi(
                     else result.names[ci]
                 )
                 detections.append((x1, y1, x2, y2, name, float(cf)))
-
-        # 先放大底图（保持与输入的宽高比一致）
-        if scale != 1.0:
-            canvas = cv2.resize(
-                canvas,
-                (int(round(w * scale)), int(round(h * scale))),
-                interpolation=cv2.INTER_CUBIC,
-            )
 
         font = load_font(font_path, cur_font_size)
         canvas = draw_detections(
@@ -265,18 +280,35 @@ def predict_high_dpi(
             font_stroke=font_stroke,
         )
 
-        stem = os.path.splitext(os.path.basename(result.path))[0]
+        stem = os.path.splitext(os.path.basename(src_path))[0]
         out_path = os.path.join(output_dir, f"{stem}.{save_format.lower()}")
         save_with_dpi(canvas, out_path, dpi=dpi)
         saved.append(out_path)
 
         print(
-            f"[ok] {os.path.basename(result.path)} -> {out_path}  目标 {len(detections)} 个"
+            f"[ok] {os.path.basename(src_path)} -> {out_path}  {tw}x{th}  目标 {len(detections)} 个"
         )
 
         if show:
             cv2.imshow("high-dpi predict", canvas)
             cv2.waitKey(0)
+
+    # stream=True 逐张出结果，避免一次性把整批图读进内存
+    results = model.predict(
+        source=paths,
+        conf=conf,
+        iou=iou,
+        imgsz=eff_imgsz,
+        stream=True,
+        verbose=False,
+        save=False,
+    )
+    for src_path, result in zip(paths, results):
+        render(result, src_path)
+
+    if show:
+        cv2.destroyAllWindows()
+
     if show:
         cv2.destroyAllWindows()
 
@@ -285,65 +317,55 @@ def predict_high_dpi(
 
 
 # ---------------------------------------------------------------- 入口
-FONT_FILES = {
-    "regular": r"C:\Windows\Fonts\times.ttf",
-    "bold": r"C:\Windows\Fonts\timesbd.ttf",
-    "italic": r"C:\Windows\Fonts\timesi.ttf",
-    "bold_italic": r"C:\Windows\Fonts\timesbi.ttf",
-}
-DEFAULT_FONT_WEIGHT = "bold"
-
-# 蓝色框（BGR，OpenCV 口径）
-BOX_COLOR_BGR = (255, 0, 0)
-# 标签文字白色（Pillow 口径，RGB）
-TEXT_COLOR_RGB = (255, 255, 255)
 
 if __name__ == "__main__":
 
-    # model_paths = [
-    #     "./runs/detect/baseline/yolo5/weights/",
-    #     "./runs/detect/baseline/yolo8/weights/",
-    #     "./runs/detect/baseline/yolo9/weights/",
-    #     "./runs/detect/baseline/yolo10/weights/",
-    #     "./runs/detect/baseline/yolo11/weights/",
-    #     "./runs/detect/baseline/yolo12/weights/",
-    #     "./runs/detect/baseline/yolo26/weights/",
-    #     "./runs/detect/ASGP-YOLO/ADown_SPPELAN_SE_56/weights/",
-    #     "./runs/detect/ASGP-YOLO/ADown_SPPELAN_SE_56_GPC3k2/weights/",
-    # ]
-
-    # save_names = [
-    #     "yolo5",
-    #     "yolo8",
-    #     "yolo9",
-    #     "yolo10",
-    #     "yolo11",
-    #     "yolo12",
-    #     "yolo26",
-    #     "AS-YOLO",
-    #     "ASGP-YOLO",
-    # ]
-
     model_paths = [
+        "./runs/detect/baseline/yolo5/weights/",
+        "./runs/detect/baseline/yolo8/weights/",
+        "./runs/detect/baseline/yolo9/weights/",
+        "./runs/detect/baseline/yolo10/weights/",
         "./runs/detect/baseline/yolo11/weights/",
+        "./runs/detect/baseline/yolo12/weights/",
+        "./runs/detect/baseline/yolo26/weights/",
         "./runs/detect/ASGP-YOLO/ADown_SPPELAN_SE_56/weights/",
         "./runs/detect/ASGP-YOLO/ADown_SPPELAN_SE_56_GPC3k2/weights/",
     ]
 
     save_names = [
-        "yolo11_test",
-        "AS-YOLO_test",
-        "ASGP-YOLO_test",
+        "yolo5",
+        "yolo8",
+        "yolo9",
+        "yolo10",
+        "yolo11",
+        "yolo12",
+        "yolo26",
+        "AS-YOLO",
+        "ASGP-YOLO",
     ]
+
+    # model_paths = [
+    #     "./runs/detect/baseline/yolo11/weights/",
+    #     "./runs/detect/ASGP-YOLO/ADown_SPPELAN_SE_56/weights/",
+    #     "./runs/detect/ASGP-YOLO/ADown_SPPELAN_SE_56_GPC3k2/weights/",
+    # ]
+
+    # save_names = [
+    #     "yolo11_test",
+    #     "AS-YOLO_test",
+    #     "ASGP-YOLO_test",
+    # ]
 
     for model_path, save_name in zip(model_paths, save_names):
         predict_high_dpi(
             weights=get_best_last_model(model_path),
-            source="./test_figures",
+            source="./figures",
             output_dir=f"outputs/{save_name}",
             conf=0.4,
             iou=0.7,
-            imgsz=640,
             dpi=300,
             class_names={0: "crack"},
+            reshape_size=320,
+            font_size=25,
+            box_width=4
         )
