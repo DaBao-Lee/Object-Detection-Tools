@@ -1,6 +1,6 @@
 # ObjectDetection
 
-一个**独立、通用的目标检测工程工具包**，基于 **Ultralytics YOLO**。仓库根目录本身就是一个 Python 包（`ObjectDetection`）：把**它的父目录**加入 `sys.path`，即可用 `from ObjectDetection import ...` 按需调用，不依赖任何特定项目。覆盖从**视频抽帧 → 标注格式转换 → 标签治理 → 数据集划分 → 训练 → 验证 → 推理 / 高 DPI 出图 → 模型导出 → 复杂度统计 → 训练指标对比 → 视觉大模型报告**的完整链路。
+一个**独立、通用的目标检测工程工具包**，基于 **Ultralytics YOLO**。仓库根目录本身就是一个 Python 包（`ObjectDetection`）：把**它的父目录**加入 `sys.path`，即可用 `from ObjectDetection import ...` 按需调用，不依赖任何特定项目。覆盖从**视频抽帧 → 标注格式转换 → 标签治理 → 数据集划分 → 训练 → 验证 → 推理 / 高 DPI 出图 / 视频流单帧推理与渲染 → 模型导出 → 复杂度统计 → 视觉大模型报告**的完整链路。
 
 ---
 
@@ -9,20 +9,24 @@
 Python ≥ 3.10（`preprocess.py` 使用 `set | None` 注解，3.9 导入即抛 `TypeError`；开发环境为 3.12 / 3.13）。
 
 ```bash
-pip install ultralytics opencv-python numpy pillow tqdm lxml matplotlib pandas requests
+pip install ultralytics opencv-python numpy pillow tqdm lxml requests
+
+# 只在要用 .onnx 引擎时额外装（predict.py 里的 onnx_predict 需要；不装不影响其余模块与整包导入）
+pip install onnxruntime-gpu==1.20.0   # 导入名仍是 import onnxruntime；只有 -gpu 包带 CUDAExecutionProvider
 ```
 
 | 依赖            | 用途                                               | 涉及模块                                                                             |
 | --------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `ultralytics`   | YOLO / YOLOWorld 训练、验证、推理、导出、COCO 转换 | `train` `val` `predict` `high_dpi_predict` `export` `convert` `calc_complexity_yolo` |
-| `opencv-python` | 图像读写、画框、显示、视频解码                     | `predict` `high_dpi_predict` `video`                                                 |
-| `numpy`         | 坐标数组运算、指标统计                             | `predict` `high_dpi_predict` `convert` `compare_metrics`                             |
-| `pillow`        | 中文文本绘制、ICC 配置处理、图片收集               | `predict` `high_dpi_predict` `preprocess`                                            |
-| `tqdm`          | 进度条                                             | `convert` `preprocess` `dataset` `systools` `video`（ultralytics 内部也用）          |
+| `ultralytics`   | YOLO 训练、验证、推理、导出、COCO 转换             | `train` `val`（含 `calc_complexity_yolo`）`predict` `high_dpi_predict` `export` `convert` |
+| `opencv-python` | 图像读写、画框、显示、视频解码                     | `predict` `draw_results` `high_dpi_predict` `video_process`                          |
+| `numpy`         | 坐标数组运算、前处理张量                           | `predict` `draw_results` `high_dpi_predict` `convert` `video_process` |
+| `pillow`        | 中文文本绘制、标签排版、ICC 配置处理、图片收集     | `predict` `draw_results` `high_dpi_predict` `preprocess`                             |
+| `tqdm`          | 进度条                                             | `convert` `preprocess` `dataset` `systools` `video_process`（ultralytics 内部也用）   |
 | `lxml`          | VOC XML 解析                                       | `convert`                                                                            |
-| `matplotlib`    | 训练曲线绘制、中文字体与论文白底样式               | `compare_metrics`                                                                    |
-| `pandas`        | `results.csv` 读取与统计计算                       | `compare_metrics`                                                                    |
 | `requests`      | 调用 OpenAI 兼容的视觉大模型接口                   | `open_api`（**惰性导入**，不装也不影响其它模块）                                     |
+| `onnxruntime-gpu` | .onnx 单帧推理（CUDA / CPU 双 provider）         | `predict` 里的 `.onnx` 引擎（`predict.py` 用 `try/except` 导入它，不装也能整包导入，只有调 `onnx_predict` 才报错） |
+
+> `onnxruntime-gpu` 有两个前提，缺一个就静默退回 CPU、耗时翻倍：① 环境里已有 `torch`（onnxruntime 的 cublas/cudnn DLL 靠它带进来）；② 代码里 `import torch` 必须排在 `import onnxruntime` 前面——`predict.py` 顶部已按这个顺序写好，别调换。自检：`python -c "import torch, onnxruntime as o; print(o.get_available_providers())"`，列表里出现 `CUDAExecutionProvider` 才算通。
 
 ---
 
@@ -30,20 +34,19 @@ pip install ultralytics opencv-python numpy pillow tqdm lxml matplotlib pandas r
 
 ```
 ObjectDetection/                 # 仓库根目录即 Python 包
-├── __init__.py                  # 统一 re-export + __all__（49 个符号，不含 high_dpi_predict）
+├── __init__.py                  # 统一 re-export + __all__（63 个符号，不含 high_dpi_predict）
 ├── convert.py                   # 标注格式转换：COCO / 百度 COCO / VOC → YOLO txt
 ├── preprocess.py                # 图像与标签预处理、标签类别治理、类别计数
 ├── dataset.py                   # 图标签配对检查、数据集划分、分块收集
 ├── train.py                     # YOLO 训练封装
-├── val.py                       # 模型验证
-├── predict.py                   # 推理（内置绘图 / 自绘中文标签两套）
+├── val.py                       # 模型验证 + 复杂度统计（evaluate / calc_complexity_yolo）
+├── predict.py                   # 推理三合一：批量图片（predict）+ .pt 单帧引擎 + .onnx 单帧引擎
+├── draw_results.py              # 检测结果渲染（画框 + 标签、日志面板、窗口居中、组装 PredictResult）
 ├── high_dpi_predict.py          # 高 DPI 结果图（Times New Roman 标签 / DPI 元数据 / 放大输出）
 ├── export.py                    # 模型导出（ONNX / TensorRT / OpenVINO …）
-├── model_utils.py               # 训练产物定位（best.pt / last.pt）
-├── calc_complexity_yolo.py      # 模型复杂度统计（参数量 / GFLOPs）
-├── compare_metrics.py           # 训练指标对比可视化（results.csv → 曲线 / 统计）
+├── model_utils.py               # 权重定位（best.pt / last.pt、按文件夹列权重）
 ├── systools.py                  # 通用文件操作（建目录、复制、删除、批量重命名）
-├── video.py                     # 视频抽帧（单文件 / 批量 / 递归）
+├── video_process.py             # 视频抽帧存盘（单文件 / 批量 / 递归）+ 内存取帧（逐帧 / 跳帧）
 ├── open_api.py                  # 视觉大模型接口调用（OpenAI 兼容 / 流式 / 多模态）
 ├── README.md
 └── update.bat                   # Windows 一键提交并推送脚本
@@ -53,13 +56,19 @@ ObjectDetection/                 # 仓库根目录即 Python 包
 
 ## 功能总览
 
-### 🎬 数据获取 — `video.py`
+### 🎬 数据获取与取帧 — `video_process.py`
 
-| 函数             | 作用                                               |
-| ---------------- | -------------------------------------------------- |
-| `extract_frames` | 主入口：批量抽帧，含配置打印、逐视频报告与汇总统计 |
-| `process_video`  | 抽取单个视频的帧                                   |
-| `collect_videos` | 从文件或文件夹收集视频                             |
+| 函数             | 作用                                                                       |
+| ---------------- | -------------------------------------------------------------------------- |
+| `extract_frames` | 主入口：批量抽帧**存盘**，含配置打印、逐视频报告与汇总统计                 |
+| `process_video`  | 抽取单个视频的帧                                                           |
+| `collect_videos` | 从文件或文件夹收集视频（按 `VIDEO_EXTS` 过滤）                             |
+| `video_info`     | 读 fps / 宽 / 高 / 帧数，给分帧循环和前端进度当基准                        |
+| `iter_frames`    | **内存逐帧**产出 `(帧号, BGR 帧)`，`stride` 抽帧、`max_frames` 截断        |
+| `read_frame`     | 跳到指定帧，返回 `(实际帧号, BGR 帧)`；可复用已打开的 `cap` 省掉重开销     |
+| `VIDEO_EXTS`     | 支持的视频扩展名集合（10 个，收集过滤与上传白名单共用）                    |
+
+> `video_info` / `iter_frames` / `read_frame` 不解盘，直接给 `ndarray`，接 `pt_predict` / `onnx_predict` 用；`extract_frames` 是"生产数据集"那条线，两者不要混用。
 
 ### 🔄 标注转换 — `convert.py`
 
@@ -73,39 +82,67 @@ ObjectDetection/                 # 仓库根目录即 Python 包
 
 | 函数                         | 作用                                                                       |
 | ---------------------------- | -------------------------------------------------------------------------- |
-| `count_labels`               | 统计各类别标注数量，支持 YOLO txt + VOC xml，可配 `names` 显示中文类名     |
-| `replace_labels_with_target` | 把标签文件里**指定类别**的 ID 改成目标类别（`origin_id="all"` 为全量替换） |
-| `batch_replace_labels`       | 上者的文件夹批量版，返回改动统计                                           |
+| `count_labels`               | 统计各类别标注数量，支持 YOLO txt + VOC xml；`names` 可传 `{id: 名字}` 字典**或名称列表**，列表按顺序补下标 |
+| `replace_labels_with_target` | 把标签文件里**指定类别**的 ID 改成目标类别（`origin_id="all"` 为全量替换）；`warn_if_no_match=True` 时命中 0 行告警 |
+| `batch_replace_labels`       | 上者的文件夹批量版，返回改动统计 + `failed` 失败明细；非法 ID 在扫描前就报错 |
 | `fill_empty_labels`          | 为缺失标签的图片生成空标签文件（YOLO 背景图），支持 `dry_run` 预览         |
-| `normalize_labels`           | 把标签坐标夹紧到 1.0 以内                                                  |
-| `rm_icc_profile`             | 删除 PNG 的 ICC 色彩配置（部分标注工具对带 ICC 的图兼容性差）              |
-| `collect_images`             | 收集目录下所有图片                                                         |
+| `normalize_labels`           | 标签坐标双向钳位（`>1.0` 与 `<0.0` 都改），只重写真正被改到的那一行；NaN 只上报为 `nan_values`，不写文件 |
+| `rm_icc_profile`             | 删除 PNG 的 ICC 色彩配置（部分标注工具对带 ICC 的图兼容性差）；单张读不了不再中断整批，失败记在 `failures` |
+| `collect_images`             | 收集目录下所有图片；`root` 收 `str` 或 `PathLike`，目录不存在抛 `FileNotFoundError`，`image_exts` 可覆盖默认后缀集合 |
 | `IMAGE_EXTS`                 | 模块级常见图片扩展名集合                                                   |
 
 ### 📂 数据集组织 — `dataset.py`
 
 | 函数                           | 作用                                                                                       |
 | ------------------------------ | ------------------------------------------------------------------------------------------ |
-| `check_and_copy_missing_files` | 只查一个方向：图片多则找缺标签的图，标签多则找缺图的标签；`meta_path` 再比对一份元数据图片 |
-| `spilt_train_test`             | 划分 train/val（可选 test）并复制落盘，支持负样本混入与固定随机种子                        |
-| `split_meta`                   | 把目录按 `split_num` 分成若干份（分布式标注 / 分批处理用）；图标签数量不一致时静默返回     |
-| `collect_meta`                 | 收集 `split_meta` 各子目录的文件；`save=True` 另复制一份到 `./meta`                        |
-| `copy_files`                   | 复制文件，同名跳过；`max_num` 随机抽样，默认交互确认（`assume_yes=True` 跳过）             |
-| `rm_files`                     | 删除指定文件**及其同名标签**（保证配对不被破坏）                                           |
+| `check_and_copy_missing_files` | 只查一个方向：图片多则找缺标签的图，标签多则找缺图的标签；`meta_path` 再比对一份元数据图片；缺失目录自动创建 |
+| `split_train_test`             | 划分 train/val（可选 test）并复制落盘，支持负样本混入与固定随机种子；`upset_photo=True` 删旧文件前逐条确认（`assume_yes=True` 跳过）；原拼错名 `spilt_train_test` 已废弃删除 |
+| `split_meta`                   | 把目录按 `split_num` 均分成若干份（余数摊给前几段，不产生空份）；图标签数量不一致时告警并返回 `[]`；返回各份路径列表 |
+| `collect_meta`                 | 收集 `split_meta` 各子目录的文件；`save=True` 另复制一份到 `./meta`，目录已存在不再报错；无数据时返回 `[]` |
+| `copy_files`                   | 复制文件，同名跳过，目标目录自动创建；`max_num` 随机抽样，默认交互确认（`assume_yes=True` 跳过）；抽样数超过候选数给出明确报错 |
+| `rm_files`                     | 删除指定文件**及其同名标签**（`.jpg`/`.png`/`.jpeg` 同名一起找，保证配对不被破坏）；打印删了什么，没删到给 `[warn]`，返回实际删除路径列表 |
 
 ### 🏋️ 训练 / 验证 / 推理 / 导出
 
 | 模块                      | 函数                   | 作用                                                                                                                                                              |
 | ------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `train.py`                | `train`                | YOLO 训练封装：`epochs` / `batch` / `imgsz` / `optimizer` / `lr` / `patience` / `mosaic` / `close_mosaic` / `seed_change`（False 固定 `seed=1`）/ `yolo_world` 等 |
+| `train.py`                | `train`                | YOLO 训练封装：`epochs` / `batch` / `imgsz` / `optimizer` / `lr` / `patience` / `mosaic` / `close_mosaic` / `seed_change`（False 固定 `seed=1`）等             |
 | `val.py`                  | `evaluate`             | 验证：`iou`（NMS 阈值）/ `batch` / `rect` / `imgsz` / `conf`（默认 0.001），返回 ultralytics 验证结果；`rect` 口径见[注意点 9](#9-验证的-rect-口径不可混用)       |
-| `predict.py`              | `predict`              | 用 ultralytics 内置绘图推理：`conf` / `iou` / `save` / `show` / `stream` / `verbose` / `yolo_world`                                                               |
-| `predict.py`              | `advanced_predict`     | **自绘检测框**，支持中文字体与按 ID 覆盖类别名（未给出的沿用模型名称）；额外支持 `iou` / `yolo_world`                                                             |
+| `predict.py`              | `predict`              | 用 ultralytics 内置绘图推理：`conf` / `iou` / `save` / `show` / `stream` / `verbose`                                                                                |
 | `predict.py`              | `add_pillow_text`      | 在图像数组上写文本（走 Pillow，解决 OpenCV 不支持中文）                                                                                                           |
 | `predict.py`              | `get_infer_data`       | `typing=InferDataType.IMAGE`（随机抽样，`max_num` 上限）/ `InferDataType.DIR`（整目录）；`recursive` 控制子目录；扩展名规则见注意点 11                            |
-| `export.py`               | `export_model`         | 导出 ONNX / TensorRT / OpenVINO / TorchScript；`yolo_world` 可选                                                                                                  |
+| `export.py`               | `export_model`         | 导出 ONNX / TensorRT / OpenVINO / TorchScript                                                                                                                      |
 | `model_utils.py`          | `get_best_last_model`  | 定位 `best.pt` / `last.pt`；`index` 指定 `./runs/detect/train{index}/weights`                                                                                     |
-| `calc_complexity_yolo.py` | `calc_complexity_yolo` | 统计参数量（M）与计算量（GFLOPs），`fuse` 控制是否 BN 折叠，`imgsz` 参与 GFLOPs 计算                                                                              |
+| `model_utils.py`          | `list_weights`         | 列出一个文件夹里的权重（默认 `.pt` / `.onnx`），按文件名排序；`recursive` 递归、`exts` 传 `"pt"` 或 `".pt"` 都认                                                  |
+| `val.py`                  | `calc_complexity_yolo` | 统计参数量（M）与计算量（GFLOPs），`fuse` 控制是否 BN 折叠，`imgsz` 参与 GFLOPs 计算                                                                              |
+
+### ⚡ 单帧流式推理 — `predict.py` 的两个引擎
+
+| 函数              | 作用                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| `pt_predict`      | `.pt` 单帧入口：模型按绝对路径缓存复用，出框后交给 `finish_predict`；参数与 `onnx_predict` 一一对应 |
+| `warmup_pt`       | 全黑假帧走一遍 predict，提前掉 CUDA 初始化与 kernel 首编译（首次加载时已自动调一次）              |
+| `onnx_predict`    | `.onnx` 单帧入口：自带 letterbox / 归一化 / 解码 / 逐类 NMS；session 按「路径 + providers」缓存   |
+| `letterbox`       | 等比缩放后居中贴进 `size×size` 的 114 灰画布，返回 `(画布, scale, pad_x, pad_y)`                 |
+| `nms_per_class`   | 逐类 NMS，返回保留框在原候选数组里的下标；按类分组是为了跨类不互相压制                            |
+
+> 五个符号都在 `__init__.py` 里，直接 `from ObjectDetection import pt_predict, onnx_predict, letterbox, nms_per_class`。`predict.py` 顶部对 `onnxruntime` 做了 `try/except` 兜底：没装也能整包导入、也能正常用 `.pt` 引擎，只有真去调 `onnx_predict` / `_load_onnx_model` 时才抛 `ImportError` 提示装包。
+
+> 两条链路出框后的画图口径完全一致，但 `infer_ms` 的**计时范围不同**：`.pt` 含 ultralytics 内部的预处理 + 推理 + NMS，`.onnx` 含 letterbox + 归一化 + `session.run`、**不含**它自己那步 Python 解码 / NMS。两者不要横向比大小，只跟同一引擎的另一次运行比。
+
+### 🖌 结果渲染 — `draw_results.py`
+
+| 函数                            | 作用                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `finish_predict`                | 统一收口：统计、画框、打面板、缩放、弹窗、组装 `PredictResult`（各引擎共用这一条） |
+| `draw_boxes`                    | 在帧副本上画框 + 「类别 置信度」标签，输出仍是 BGR；标签贴不下自动改挂框内        |
+| `draw_log_panel`                | 左上角叠半透明底，逐行写等宽对齐的「键 值」日志                                   |
+| `load_font`                     | 字重名（`FONT_FILES` 的键）或 ttf 路径 → Pillow 字体；缺文件退默认字体且只警告一次 |
+| `get_screen_size` / `center_window` | 读物理分辨率 / 把窗口摆到屏幕正中，同一尺寸只真搬一次                            |
+| `Detection` / `PredictResult`   | 单个框与整帧产出的规范结构，各条链路都归一到这两个类型                            |
+| `BOX_COLOR` … `PANEL_ALPHA`     | 渲染默认值：颜色统一按 BGR 收，需要 Pillow 时内部翻 RGB                           |
+
+> `center_window` 扣掉的窗口装饰边（左边框 9px、标题栏 38px）是 Win 26300 + OpenCV 5.0 + 125% 缩放的实测值，换系统或换 OpenCV 版本可能要重新标定；搬不动（headless 等）返回 `(-1, -1)`，不抛异常。
 
 ### 🖼️ 高 DPI 结果图 — `high_dpi_predict.py`
 
@@ -127,21 +164,6 @@ ObjectDetection/                 # 仓库根目录即 Python 包
 | `chat_stream`           | 函数式入口：一次调用拿到完整回复文本（后端生成报告常用） |
 | `getSystemPrompt`       | 读取 system prompt 文本文件                              |
 | `DEFAULT_SYSTEM_PROMPT` | 未指定 system prompt 时的默认文案                        |
-
-### 📈 训练指标对比 — `compare_metrics.py`
-
-| 函数                 | 作用                                                                                      |
-| -------------------- | ----------------------------------------------------------------------------------------- |
-| `compare_metrics`    | **总入口**：读一个或多个 `results.csv`，出对比曲线 + 末 N epoch 统计                      |
-| `plot_curves`        | 唯一出图函数（曲线叠加，可选末 N 均值参考线）                                             |
-| `list_metrics`       | 罗列可选指标（编号 / key / 列名 / 趋势），打印编号表并返回 DataFrame                      |
-| `resolve_metrics`    | 把编号 / key / 完整列名 / 模糊子串 / `Metric` 解析成 `Metric` 列表                        |
-| `expand_csv_inputs`  | str / Path / 目录 / 列表 → `results.csv` 路径列表（去重、保序；`recursive` 控制目录递归） |
-| `load_results_csv`   | 读单个 `results.csv`，列名清洗 + 数值化 + 按 epoch 排序                                   |
-| `read_run_label`     | 从路径提取短图例名（如 `.../ghost/results.csv` → `ghost`；`root` 指定相对根）             |
-| `last_n_stats`       | 末 N epoch 的 mean / std / best / n / start_epoch                                         |
-| `smooth_series`      | 滑动平均平滑（`window <= 1` 原样返回）                                                    |
-| `METRICS` / `Metric` | 指标注册表：15 个指标，分训练损失 / 验证指标 / 验证损失 / 训练过程四组                    |
 
 ### 🛠️ 通用文件操作 — `systools.py`
 
@@ -165,13 +187,13 @@ import sys
 sys.path.insert(0, r"<ObjectDetection 的父目录>")   # 例如 D:/A/CODE
 
 # 推荐：显式导入需要的函数
-from ObjectDetection import extract_frames, count_labels, spilt_train_test, train
+from ObjectDetection import iter_frames, pt_predict, count_labels, split_train_test, train
 
 # 也可以（会触发全部子模块加载，见下方注意点）
 from ObjectDetection import *
 ```
 
-如果调用脚本就放在仓库根目录里，也可以绕过包 `__init__`、直接导入同级模块（单文件模式，见[注意点 1](#1-导入即全量加载依赖)）。`high_dpi_predict.py` 例外——它用包内相对导入，只能走包模式（见注意点 13）：
+如果调用脚本就放在仓库根目录里，也可以绕过包 `__init__`、直接导入同级模块（单文件模式，见[注意点 1](#1-导入即全量加载依赖)）。`high_dpi_predict.py` 例外——它用包内相对导入，只能走包模式（`draw_results.py` 自包含，同级直接 `from draw_results import ...` 也认；见注意点 13）：
 
 ```python
 from preprocess import count_labels
@@ -248,25 +270,26 @@ check_and_copy_missing_files(
 replace_labels_with_target("./datasets/labels/a.txt", 1, 0)
 replace_labels_with_target("./datasets/labels/a.txt", 2, 0, warn_if_no_match=True)
 
-# 或整个文件夹批量（返回改动统计）
+# 或整个文件夹批量（非法 ID 在扫描前就报错；返回改动统计 + 失败明细）
 report = batch_replace_labels("./datasets/labels", origin_id=1, target_id=0,
                               warn_if_no_match=True)
-print(report)   # {'total': 300, 'changed_files': 42, 'replaced_lines': 87, 'no_match_files': 5}
+print(report)   # {'total': 300, 'changed_files': 42, 'replaced_lines': 87, 'no_match_files': 5, 'failed': []}
 
 # 给没有目标的图补空标签（先 dry_run 预览）
 fill_empty_labels("./datasets/images", "./datasets/labels", dry_run=True)
 fill_empty_labels("./datasets/images", "./datasets/labels", dry_run=False)
 
-# 夹紧越界坐标
-normalize_labels("./datasets/labels")
+# 钳位越界坐标（>1.0 与 <0.0 都修），只重写改到的那一行，未改动的行原样保留
+print(normalize_labels("./datasets/labels"))
+# {'files': 300, 'changed_files': 3, 'clipped': 7, 'nan_values': []}
 ```
 
 ### 4️⃣ 划分训练 / 验证集
 
 ```python
-from ObjectDetection import spilt_train_test
+from ObjectDetection import split_train_test
 
-spilt_train_test(
+split_train_test(
     li_path="./datasets/all",              # 混合存放图片与标签的目录，或路径列表
     train_img_path="./datasets/train/images",
     val_img_path="./datasets/val/images",
@@ -275,7 +298,8 @@ spilt_train_test(
     val_size=0.2,                          # float=比例，int=数量
     random_state=110,                      # 固定种子，划分可复现
     negative_path="./datasets/negatives",  # 负样本混入训练集，压制误检
-    upset_photo=True,                       # 先清空目标目录再划分
+    upset_photo=True,                      # 先清空目标目录再划分（清空前会打印数量并等 y 确认）
+    assume_yes=True,                       # 无人值守脚本用 True 跳过确认
 )
 ```
 
@@ -283,7 +307,7 @@ spilt_train_test(
 
 ```python
 from ObjectDetection import train, evaluate, get_best_last_model, export_model
-from ObjectDetection import advanced_predict, calc_complexity_yolo
+from ObjectDetection import predict, calc_complexity_yolo
 
 # 训练
 train(
@@ -310,48 +334,25 @@ best = get_best_last_model(mode=0)      # mode=0 → best.pt；mode=1 → last.p
 stats = calc_complexity_yolo(best, imgsz=640)
 print(stats["params_M"], stats["GFLOPs"])   # e.g. 2.590 8.700
 
-# 推理（自绘框 + 中文标签）
-advanced_predict(
+# 推理（批量跑图：ultralytics 内置绘图，save=True 存到 runs/detect/predict*/）
+predict(
     model_selection=best,
     img_path="./datasets/val/images",
     conf=0.5,
-    font_path="C:/Windows/Fonts/simhei.ttf",       # 给字体路径才能显示中文
-    replace_text={0: "裂缝", 1: "剥落"},            # 类别名整表替换
-    save=True,                # 存到 ./results/
-    show=False,               # 批量跑图务必置 False
+    iou=0.7,
+    save=True,
+    show=False,               # 批量跑图务必置 False，否则每张图都阻塞等按键
 )
+
+# 要中文标签 / 自定义面板，改走单帧引擎逐帧处理（见 8️⃣）
+# from ObjectDetection import pt_predict
+# res = pt_predict(best, frame, font="bold", panel=True)
 
 # 导出 ONNX 部署
 export_model(best, format="onnx")
 ```
 
-### 6️⃣ 多实验指标对比，出论文配图
-
-```python
-from ObjectDetection import compare_metrics, list_metrics
-
-# 先看有哪些指标可选，凭编号挑（返回 DataFrame，同时打印编号表）
-list_metrics("./runs/detect/baseline/yolo11/results.csv")
-
-result = compare_metrics(
-    csv_paths=[                                  # 也可直接传目录，自动递归找 results.csv
-        "./runs/detect/baseline/yolo11/results.csv",
-        "./runs/detect/improvement/GhostConv/results.csv",
-        "./runs/detect/improvement/GhostConv_SPPELAN_SimAM/results.csv",
-    ],
-    metrics=["mAP50-95", "mAP50", "box_loss"],  # 编号 / key / 列名 / 模糊子串都行
-    labels=["Baseline", "GhostConv", "Ours"],   # 不给就用路径里的目录名
-    last_n=10,          # 统计口径：末 10 个 epoch
-    std_band=True,      # 叠加末 10 epoch 均值参考线
-    smooth_window=3,    # 曲线滑动平均
-    root="./runs/detect",   # 提取图例名时的相对根目录
-    out_dir="figures", out_name="mAP_compare", dpi=300,
-    show=False,
-)
-print(result["stats"]["mAP50-95"]["Ours"])   # {'mean':…, 'std':…, 'best':…, 'n':…, 'start_epoch':…}
-```
-
-### 7️⃣ 视觉大模型生成病害描述报告
+### 6️⃣ 视觉大模型生成病害描述报告
 
 检测框结果转 base64 data-url，交给本地 llama.cpp / vLLM 之类的 OpenAI 兼容视觉模型出文字报告。
 
@@ -381,7 +382,7 @@ gen = agent.openAPIRequest("描述病害", image_prompt=data_url,
 text = agent.parseGenerator(gen, show=True)   # show=True 同时逐块打印
 ```
 
-### 8️⃣ 生成高 DPI 论文结果图
+### 7️⃣ 生成高 DPI 论文结果图
 
 ```python
 # 未在 __init__.py 中 re-export，只能从子模块导入（前提见注意点 13）
@@ -405,6 +406,36 @@ print(saved)
 ```
 
 `dpi` 只写入元数据，不改变像素数；要真正提高分辨率用 `scale`。输出文件名为 `{原图名}.{save_format}`，同名会覆盖。
+
+### 8️⃣ 视频流单帧推理（网页 / 弹窗显示）
+
+```python
+from ObjectDetection import iter_frames, pt_predict, onnx_predict, read_frame, video_info
+
+SRC = "./videos/2.mp4"
+W = "./weights/yolov8n.pt"
+ONNX = "./weights/yolov8n.onnx"
+
+# 整段视频：逐帧进内存，画完框左上角自带日志面板
+for idx, frame in iter_frames(SRC, stride=1):
+    r = pt_predict(W, frame, conf=0.5)                 # 模型按路径缓存，只在第一帧加载
+    print(r.count, r.counts_by_class, r.infer_ms, r.elapsed_ms)
+    cv2.imshow("frame", r.annotated)
+    if cv2.waitKey(1) & 0xFF == 27:
+        break
+
+# 同一帧换引擎出图口径完全一致（耗时口径见上面 ⚡ 节的说明）
+r2 = onnx_predict(ONNX, frame, conf=0.5, providers=["CPUExecutionProvider"])
+
+# 前端拖进度条：只预测点到的那一帧，复用同一个 cap 句柄每帧省掉约 40ms 开容器
+cap = cv2.VideoCapture(SRC)
+real_idx, one = read_frame(SRC, int(video_info(SRC)["frames"] * 0.6), cap=cap)
+r3 = pt_predict(W, one, conf=0.5, display_size=(640, 360), show_panel=False)
+cv2.imwrite("./out.jpg", r3.display)                   # display 是成品图缩放版，xyxy 仍是原图坐标
+cap.release()
+```
+
+首帧特别慢是正常的：`pt_predict` 第一次建模型约 1s、`.onnx` 第一次建 session 更久，预热已在加载时自动做一次（实测 `pt` 首帧 3441 ms → 218 ms）。给网页端用就把 `show=False`、`display_size` 设成推流尺寸，取 `r.display` 编码成 JPEG。
 
 ---
 
@@ -458,10 +489,10 @@ report = fill_empty_labels(
 # {'total': 1200, 'existed': 1180, 'created': 20, 'failed': 0, 'failures': []}
 ```
 
-### `spilt_train_test` — 数据集划分
+### `split_train_test` — 数据集划分
 
 ```python
-spilt_train_test(
+split_train_test(
     li_path="./datasets/all",       # 目录 或 文件路径列表
     train_img_path=..., val_img_path=...,
     train_label_path=..., val_label_path=...,
@@ -469,22 +500,38 @@ spilt_train_test(
     negative_path=None,             # 负样本目录，随机混入训练集
     val_size=0.2,                   # float 比例 / int 数量
     random_state=110,
-    upset_photo=False,              # True 会先清空目标目录
+    upset_photo=False,              # True 会先清空目标目录（清空前逐条确认，除非 assume_yes=True）
     need_test=False,                # 需同时 upset_photo=True
+    test_img_path=None,             # 不给则自动从 …/train_img 推出 …/test_img
+    test_label_path=None,           # 同上
+    test_size=100,                  # 测试集抽样数量
+    assume_yes=False,               # True = 跳过所有交互确认
 )
 ```
 
-注意划分行为的两个坑：[见注意点 4](#4-数据集划分不校验图标签配对)。
+函数名原为 `spilt_train_test`（拼写有误），已改正并删除旧名，不再保留别名：调用方一律改用 `split_train_test`，仍写旧名会在 `from ObjectDetection import spilt_train_test` 处直接 `ImportError`。
 
-### `predict` vs `advanced_predict`
+### `pt_predict` / `onnx_predict` — 单帧流式推理
 
-|            | `predict`               | `advanced_predict`                  |
-| ---------- | ----------------------- | ----------------------------------- |
-| 绘图       | ultralytics 内置        | 自绘（OpenCV 矩形 + 文字背景块）    |
-| 中文标签   | ❌ 不支持               | ✅ 传 `font_path` 即可              |
-| 类别名替换 | 需改模型 `names`        | `replace_text={0: "裂缝"}` 整表替换 |
-| 存图位置   | `runs/detect/predict*/` | `./results/`（相对当前工作目录）    |
-| 适用场景   | 快速看效果、标准出图    | 交付中文可视化结果、论文配图        |
+两个入口的参数**一一对应**，只差引擎侧那一项：`.pt` 用 `imgsz` / `device`，`.onnx` 用 `providers`（边长由输入节点 shape 自己决定）。
+
+| 分组 | 参数                                     | 默认                            | 说明                                                                             |
+| ---- | ---------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------- |
+| 定位 | `weights`                                | 必填                            | 路径，或已经建好的 `YOLO` / `InferenceSession` 实例（原样透传，不再新建）       |
+|      | `frame`                                  | 必填                            | BGR `ndarray`；返回的 `orig` 是它的副本，调用方手里的帧不会被改动                |
+| 推理 | `conf` / `iou`                           | 0.25 / 0.7                      | 置信度阈值 / NMS IoU 阈值                                                        |
+|      | `imgsz`（仅 pt）/ `device`（仅 pt）      | 640 / None                      | 推理边长；`device` 按 ultralytics 口径，如 `"0"` / `"cpu"`                      |
+|      | `providers`（仅 onnx）                   | None                            | 默认探测本机：有 CUDA 就 `CUDA → CPU` 兜底，没有就纯 CPU                        |
+|      | `class_names`                            | None                            | `{id: 名字}`；不传用权重自带 metadata，都没有退成数字 id 字符串                  |
+| 画图 | `box_color` / `box_width` / `label_bg` / `text_color` / `font` / `font_size` / `font_stroke` | 红框(BGR) / 自适应 / 随框色 / 白 / `bold` / 自适应 / 0 | 自适应基准是输出图幅短边：字号 `max(16, 短边×4.2%)`、线宽 `max(2, 短边/180)` |
+| 面板 | `draw` / `show` / `show_panel` / `panel_font_size` | True / False / True / 自适应 | 面板字号自适应 `max(14, 短边×3.6%)`；行序 = 总数 → 各类别 → `infer_ms` → 起止时刻 |
+| 显示 | `display_size`                           | None                            | `(宽, 高)`，只影响 `result.display` 与弹窗；`Detection.xyxy` 仍是原图坐标         |
+
+返回值 `PredictResult`：`infer_ms` 是引擎自己那段，`elapsed_ms` 是整帧（含画框与标签，不含画面板和弹窗）；时长走 `perf_counter`、时刻走 `time.time`，系统对时不会把耗时拨成负数。
+
+`warmup_pt` 可以手动再压一遍（首次加载已自动压一次）；`letterbox` / `nms_per_class` 是 `.onnx` 那条线上的两个通用件，不想整套用 `onnx_predict` 时可以单拿。
+
+> `draw_results.py` 和 `high_dpi_predict.py` 各有一套画框代码，**互不调用**：前者服务流式推理（有日志面板、`label_bg` 可独立设、坐标钳到 `w-1`、画在副本上），后者服务论文出图（标签底色恒等于框色、原地改画布、坐标钳到 `w`、写 DPI 元数据）。两套口径不同是刻意的，别当重复代码合并。
 
 ### `predict_high_dpi` — 高 DPI 结果图
 
@@ -539,6 +586,22 @@ result = extract_frames(
 
 支持中文路径（内部走 `cv2.imencode` + `tofile`，规避 OpenCV 在 Windows 上的中文路径问题）。
 
+### `iter_frames` / `read_frame` / `video_info` — 内存取帧
+
+```python
+from ObjectDetection import iter_frames, read_frame, video_info, VIDEO_EXTS
+
+video_info("./videos/2.mp4")
+# {'fps': 30.0, 'width': 640, 'height': 360, 'frames': 210}   fps 拿到 0 的容器退成 25
+
+for idx, frame in iter_frames("./videos/2.mp4", stride=5, max_frames=50):
+    ...                       # 读到结尾自然停；调用方 break / 抛错时句柄也会被 release
+
+idx, frame = read_frame("./videos/2.mp4", 999999)   # 越界钳到末帧，不报错
+```
+
+三个坑：① `read_frame` 回的是**实际**帧号，不是入参——个别容器 seek 会落到邻近帧；② 传 `cap=` 时复用调用方已打开的句柄，函数内部**不重开也不 release**，逐帧端点每帧能省掉约 40 ms；③ `frame_idx < 0` 抛 `ValueError`，容器不给帧数（`frames` 拿不到）时不做钳制。
+
 ### `systools` — 通用文件操作
 
 ```python
@@ -555,7 +618,7 @@ add_suffix_to_files("./imgs", "_v2")           # a.jpg → a_v2.jpg（目标已�
 
 ### `calc_complexity_yolo` — 模型复杂度统计
 
-论文里报 Params / FLOPs 的标准口径（ultralytics 官方 `model.info()`）。
+论文里报 Params / FLOPs 的标准口径（ultralytics 官方 `model.info()`）。原独立文件 `calc_complexity_yolo.py` 已并入 `val.py`，导入方式不变（`from ObjectDetection import calc_complexity_yolo`）。
 
 ```python
 from ObjectDetection import calc_complexity_yolo
@@ -609,66 +672,21 @@ text = agent.parseGenerator(gen, show=True)
 
 > `requests` 在本模块内是**惰性导入**——只有真正发请求时才 import，所以没装 `requests` 也不影响 `from ObjectDetection import ...` 其余功能，调用时会给出明确的 `ImportError` 提示。
 
-### `compare_metrics` — 训练指标对比可视化
-
-读 ultralytics 每次训练产出的 `results.csv`，把损失与验证指标画成曲线，支持多次实验叠加对比。适合记录消融实验、做论文配图。**只读 csv，不改动任何训练产物。**
-
-```python
-from ObjectDetection import compare_metrics
-
-result = compare_metrics(
-    csv_paths="./runs/detect/mosaic 10",   # 传目录会自动递归找 results.csv
-    metrics=["mAP50-95", "mAP50"],         # 不给就是该 csv 里全部可用指标
-    last_n=10,
-    out_dir="figures",                     # 给了就落盘为 figures/metrics_compare.png
-    show=False,
-)
-print(result["mode"])                      # 'single'（单次训练曲线）/ 'multi'（横向对比）
-print(result["labels"])                    # 实际使用的图例名（重名会自动加 #2 后缀）
-print(result["stats"]["mAP50-95"])
-```
-
-`root` 只影响图例名（相对它取父目录名），不改变实际读取的路径；传目录时 `recursive=True`（默认）会递归查找子目录里的 `results.csv`。
-
-返回结构：
-
-| 键          | 含义                                                     |
-| ----------- | -------------------------------------------------------- |
-| `mode`      | `single` / `multi`                                       |
-| `csv_paths` | 实际读到的 `results.csv` 路径列表                        |
-| `labels`    | 去重后的图例名                                           |
-| `metrics`   | 解析出的 `Metric` 列表                                   |
-| `stats`     | `{指标key: {图例名: {mean, std, best, n, start_epoch}}}` |
-| `curve_fig` | matplotlib `Figure`，便于二次加工                        |
-
-指标选择（`metrics`）支持以下写法：
-
-| 写法                           | 例子                    |
-| ------------------------------ | ----------------------- |
-| 编号                           | `7` → mAP@0.5:0.95      |
-| key                            | `"mAP50-95"`            |
-| 完整列名                       | `"metrics/mAP50-95(B)"` |
-| 模糊子串（忽略大小写与分隔符） | `"map50"`               |
-| `Metric` 对象                  | `METRICS[6]`            |
-| 全部可用                       | `None`                  |
-
-绘图行为：1 个指标单列；2–4 个指标 2 列；5 个及以上 3 列。多文件叠加时用 figure 级统一图例；`std_band=True` 额外叠加末 N epoch 均值参考线；配色用 Okabe-Ito 无障碍色板，中文字体从 7 种候选中自动挑第一个已安装的。
-
 ---
 
 ## ⚠️ 危险操作清单
 
 | 函数                                                  | 风险行为                                 | 是否可逆 |
 | ----------------------------------------------------- | ---------------------------------------- | -------- |
-| `rm_files`                                            | 物理删除图片**及其同名标签**，不进回收站 | ❌       |
+| `rm_files`                                            | 物理删除图片**及其同名标签**（`.jpg`/`.png`/`.jpeg` 同名都会带走），不进回收站；删除清单会逐条打印，一个没删到也会 `[warn]` 提示 | ❌       |
 | `rm_dirs`                                             | 递归删除整个目录                         | ❌       |
 | `process_files(mode=1)`                               | 逐个物理删除源文件                       | ❌       |
 | `create_dirs(overwrite=True)`                         | 清空并重建已存在的目录                   | ❌       |
-| `spilt_train_test(upset_photo=True)`                  | 清空四个目标目录中的现有文件后再划分     | ❌       |
-| `split_meta`                                          | 删除并重建 `./meta_split_results`        | ❌       |
+| `split_train_test(upset_photo=True)`                  | 清空目标目录中的现有文件后再划分；删除前逐条打印数量并等 `y` 确认，`assume_yes=True` 直接跳过确认 | ❌       |
+| `split_meta`                                          | 删除并重建 `out_root`（默认 `./meta_split_results`），执行前打印 `[confirm]` 提示 | ❌       |
 | `coco_to_txt` / `coco_txt_BaiDu` / `voc_to_txt`       | `save_dir` 已存在则**整个删除重建**      | ❌       |
-| `rm_icc_profile`                                      | 就地覆盖写 PNG                           | ❌       |
-| `normalize_labels`                                    | 就地覆盖写 txt 坐标                      | ❌       |
+| `rm_icc_profile`                                      | 就地覆盖写 PNG（单张损坏/只读不再中断整批，失败明细在返回的 `failures` 里） | ❌       |
+| `normalize_labels`                                    | 就地覆盖写 txt 坐标；越界值双向钳位（`>1` 与 `<0` 都改），NaN 只上报不改动，明细在返回的 `nan_values` 里 | ❌       |
 | `replace_labels_with_target` / `batch_replace_labels` | 就地覆盖写标签类别                       | ❌       |
 | `add_suffix_to_files`                                 | 就地重命名文件                           | ❌       |
 | `predict_high_dpi` / `save_with_dpi`                  | 输出目录中同名图片会被覆盖               | ❌       |

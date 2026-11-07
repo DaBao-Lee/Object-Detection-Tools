@@ -1,4 +1,4 @@
-"""视频抽帧：按固定间隔从视频中提取图片帧，支持单文件与递归批量处理。
+"""视频处理：抽帧存盘（数据集生产）与内存取帧（推理消费）。
 
 函数清单：
     extract_frames    主入口：批量抽帧 + 配置打印 + 结果报告，返回统计 dict
@@ -6,15 +6,19 @@
     collect_videos    从文件或文件夹中收集视频文件
     print_config / print_report / print_summary   输出配置与统计报告
     build_encode_params / write_image / fmt_duration / log   内部工具
+    video_info        读视频的 fps / 宽高 / 帧数
+    iter_frames       逐帧产出 (帧号, BGR 帧)，支持 stride 抽帧与 max_frames 截断
+    read_frame        跳到指定帧，返回 (实际帧号, BGR 帧)
 
-依赖：opencv-python、tqdm。
+依赖：opencv-python、tqdm、numpy。
 """
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 try:
     import cv2
@@ -26,8 +30,21 @@ try:
 except ImportError:
     raise ImportError("缺少依赖 tqdm，请执行: pip install tqdm")
 
+import numpy as np
 
-VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".flv", ".webm", ".wmv"}
+# 两份口径合到一处：既是 collect_videos 的收集过滤，也是取帧/上传白名单
+VIDEO_EXTS = {
+    ".mp4",
+    ".m4v",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".flv",
+    ".webm",
+    ".wmv",
+    ".mpg",
+    ".mpeg",
+}
 SEP_THICK = "=" * 68
 SEP_THIN = "-" * 66
 
@@ -352,6 +369,140 @@ def extract_frames(
     }
 
 
+# --------------------------------------------------------------------------- #
+# 内存取帧：不解盘，直接给 ndarray 帧
+# --------------------------------------------------------------------------- #
+
+
+# 用途：读视频的 fps / 宽高 / 帧数，给分帧循环和前端进度当基准
+def video_info(path: Union[str, os.PathLike]) -> Dict[str, float]:
+
+    cap = cv2.VideoCapture(os.fspath(path))
+    if not cap.isOpened():
+        raise FileNotFoundError(f"视频打不开或缺解码器：{path}")
+
+    info = {
+        "fps": cap.get(cv2.CAP_PROP_FPS) or 25.0,  # 个别容器这里给 0，退成 25
+        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        "frames": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+    }
+    cap.release()
+    return info
+
+
+# 用途：逐帧产出 (帧号, BGR 帧)。stride 抽帧、max_frames 截断，读到结尾自然停不抛异常
+def iter_frames(
+    path: Union[str, os.PathLike],
+    stride: int = 1,
+    max_frames: Optional[int] = None,
+) -> Iterator[Tuple[int, np.ndarray]]:
+
+    cap = cv2.VideoCapture(os.fspath(path))
+    if not cap.isOpened():
+        raise FileNotFoundError(f"视频打不开或缺解码器：{path}")
+
+    try:
+        # try/finally 是为了调用方 break（比如前端点「停止」）或抛错时句柄也能放掉
+        idx = 0
+        emitted = 0
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if idx % stride == 0:
+                yield idx, frame
+                emitted += 1
+                if max_frames is not None and emitted >= max_frames:
+                    break
+            idx += 1
+    finally:
+        cap.release()
+
+
+# 用途：跳到指定帧，返回 (实际帧号, BGR 帧)；前端拖进度条后「就预测这一帧」走这里
+#       帧号不回显入参：越界钳到末帧、个别容器 seek 会落到邻近帧，调用方要知道拿到的到底是第几帧
+#       cap 传进来就复用这个已打开的句柄（不重开也不 release），逐帧端点每帧省掉 40ms 开容器；
+#       不传就是自己开自己关的一次性用法
+def read_frame(
+    path: Union[str, os.PathLike],
+    frame_idx: int,
+    cap: Optional[cv2.VideoCapture] = None,
+) -> Tuple[int, np.ndarray]:
+
+    if frame_idx < 0:
+        raise ValueError(f"frame_idx 不能为负：{frame_idx}")
+
+    own_cap = cap is None
+    if own_cap:
+        cap = cv2.VideoCapture(os.fspath(path))
+        if not cap.isOpened():
+            raise FileNotFoundError(f"视频打不开或缺解码器：{path}")
+
+    try:
+        # 前端按 duration * fps 取整，很容易正好多出 1 帧，所以越界是钳而不是报错
+        last = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) - 1
+        target = (
+            min(frame_idx, last) if last >= 0 else frame_idx
+        )  # last < 0 = 容器不给帧数，不钳
+
+        # 句柄正好停在目标帧前面（顺序步进的常态）就直接读，省掉 seek 那十几毫秒
+        if int(cap.get(cv2.CAP_PROP_POS_FRAMES)) != target:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+        ok, frame = cap.read()
+        if not ok:
+            raise RuntimeError(f"第 {target} 帧读不出来，文件可能截断或损坏：{path}")
+
+        # 读完后位置才是真值；个别后端这里不给准，兜回 target
+        actual = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+        idx = actual if actual >= 0 else target
+        return idx, frame
+    finally:
+        if own_cap:
+            cap.release()
+
+
 # 用法示例：
-#     from ObjectDetection import extract_frames
+#     from ObjectDetection import extract_frames, iter_frames, read_frame, video_info
 #     extract_frames("./datasets/样例视频", "./datasets/样例视频/frames", every_n_frames=10)
+
+
+# --------------------------------------------------------------------------- #
+# 入口
+# --------------------------------------------------------------------------- #
+if __name__ == "__main__":
+
+    # 示例视频：换成你自己的路径即可
+    SOURCE = r"D:\A\硕士\代码方面\巡检小车\stream_predict\videos\2.mp4"
+
+    print(video_info(SOURCE))
+
+    for idx, image in iter_frames(SOURCE, max_frames=100):
+
+        cv2.putText(
+            image,
+            text="frame: " + str(idx),
+            org=(10, 50),
+            fontFace=1,
+            color=(255, 255, 255),
+            fontScale=1,
+        )
+        cv2.imshow("frame", image)
+
+        if cv2.waitKey(30) & 0xFF == 27:
+            break
+
+    cv2.destroyAllWindows()
+
+    # 模拟前端拖进度条：请求帧号 -> 实际帧号 + 那一帧
+    total = int(video_info(SOURCE)["frames"])
+    for request in (0, total // 2, total - 1, total, total + 999):
+
+        idx, image = read_frame(SOURCE, request)
+        print(f"请求 {request:>6} -> 实际第 {idx} 帧，shape={image.shape}")
+
+        cv2.imshow("jump", image)
+        if cv2.waitKey(0) & 0xFF == 27:
+            break
+
+    cv2.destroyAllWindows()

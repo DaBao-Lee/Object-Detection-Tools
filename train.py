@@ -1,11 +1,10 @@
 import random
-from ultralytics import YOLO, YOLOWorld
+from ultralytics import YOLO
 
 
 def train(
     model_selection: str,
     yaml_data: str,
-    yolo_world: bool = False,
     epochs: int = 100,
     batch: int = -1,
     val: bool = True,
@@ -31,11 +30,7 @@ def train(
     # False 时固定 seed=1，保证同一份配置跑出同样结果，便于复现和调参对比。
     seed = random.randint(1, 1e9) if seed_change else 1
 
-    # YOLOWorld 是开放词表模型，加载方式与普通 YOLO 不同，需分支处理
-    if yolo_world:
-        model = YOLOWorld(model_selection)
-    else:
-        model = YOLO(model_selection)
+    model = YOLO(model_selection)
 
     model.train(
         data=yaml_data,  # 数据集配置 yaml

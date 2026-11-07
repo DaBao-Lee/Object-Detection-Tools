@@ -1,4 +1,8 @@
-"""高 DPI 预测结果图生成。"""
+"""高 DPI 预测结果图生成。
+
+只能走包模式运行（文件里用的是包内相对导入）：
+    python -m ObjectDetection.high_dpi_predict
+"""
 
 import glob
 import os
@@ -8,7 +12,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from ultralytics import YOLO
-from ObjectDetection import get_best_last_model
+
+from .model_utils import get_best_last_model
 
 # ---------------------------------------------------------------- 工具函数
 
@@ -305,9 +310,6 @@ def predict_high_dpi(
     )
     for src_path, result in zip(paths, results):
         render(result, src_path)
-
-    if show:
-        cv2.destroyAllWindows()
 
     if show:
         cv2.destroyAllWindows()

@@ -1,45 +1,58 @@
 """ObjectDetection —— 检测工具包
 
 convert 标注转换 · preprocess 数据清洗与标签治理 · dataset 数据集划分 · train 训练 ·
-val 验证 · predict 推理 · export 导出 · model_utils 权重定位 ·
-calc_complexity_yolo 模型复杂度统计 · compare_metrics 训练指标对比可视化 ·
-systools 通用文件操作 · video 视频抽帧 · open_api 视觉大模型接口调用。
+val 验证与模型复杂度统计 · predict 推理（批量图片 + .pt / .onnx 单帧流式双引擎） ·
+draw_results 检测结果渲染（画框、日志面板、窗口居中） · export 导出 ·
+model_utils 权重定位 · systools 通用文件操作 ·
+video_process 视频抽帧与内存取帧 · open_api 视觉大模型接口调用。
+
+`high_dpi_predict` 未并入本文件，需从子模块导入（它用的是包内相对导入，
+只能在仓库的父目录下按包模式跑）：
+    from ObjectDetection.high_dpi_predict import predict_high_dpi
 
 注意：部分函数带删除 / 覆盖 / 重命名语义，调用前确认路径并备份原始数据。
 """
 
-from .calc_complexity_yolo import calc_complexity_yolo
 from .convert import coco_txt_BaiDu, coco_to_txt, voc_to_txt
-from .compare_metrics import (
-    METRICS,
-    Metric,
-    compare_metrics,
-    expand_csv_inputs,
-    last_n_stats,
-    list_metrics,
-    load_results_csv,
-    plot_curves,
-    read_run_label,
-    resolve_metrics,
-    smooth_series,
-)
 from .dataset import (
     check_and_copy_missing_files,
     collect_meta,
     copy_files,
     rm_files,
-    spilt_train_test,
     split_meta,
+    split_train_test,
+)
+from .draw_results import (
+    BOX_COLOR,
+    DEFAULT_FONT,
+    FONT_FILES,
+    PANEL_ALPHA,
+    PANEL_COLOR,
+    PANEL_FONT,
+    TASKBAR_OFFSET,
+    TEXT_COLOR,
+    Detection,
+    PredictResult,
+    center_window,
+    draw_boxes,
+    draw_log_panel,
+    finish_predict,
+    get_screen_size,
+    load_font,
 )
 from .export import export_model
-from .model_utils import get_best_last_model
+from .model_utils import get_best_last_model, list_weights
 from .open_api import DEFAULT_SYSTEM_PROMPT, OpenAPI, chat_stream, getSystemPrompt
 from .predict import (
     InferDataType,
     add_pillow_text,
-    advanced_predict,
     get_infer_data,
+    letterbox,
+    nms_per_class,
+    onnx_predict,
     predict,
+    pt_predict,
+    warmup_pt,
 )
 from .preprocess import (
     IMAGE_EXTS,
@@ -60,33 +73,53 @@ from .systools import (
     rm_dirs,
 )
 from .train import train
-from .val import evaluate
-from .video import extract_frames
+from .val import calc_complexity_yolo, evaluate
+from .video_process import (
+    VIDEO_EXTS,
+    extract_frames,
+    iter_frames,
+    read_frame,
+    video_info,
+)
 
 __all__ = [
-    # 训练 / 验证 / 推理 / 导出
+    # 训练 / 验证 / 复杂度
     "train",
     "evaluate",
+    "calc_complexity_yolo",
+    # 批量图片推理
     "predict",
-    "advanced_predict",
     "add_pillow_text",
-    "export_model",
-    "get_best_last_model",
     "InferDataType",
     "get_infer_data",
-    "calc_complexity_yolo",
-    # 训练指标对比可视化
-    "compare_metrics",
-    "list_metrics",
-    "resolve_metrics",
-    "load_results_csv",
-    "expand_csv_inputs",
-    "read_run_label",
-    "smooth_series",
-    "last_n_stats",
-    "plot_curves",
-    "METRICS",
-    "Metric",
+    # 单帧流式推理 · .pt 引擎
+    "pt_predict",
+    "warmup_pt",
+    # 单帧流式推理 · .onnx 引擎
+    "onnx_predict",
+    "letterbox",
+    "nms_per_class",
+    # 导出与权重定位
+    "export_model",
+    "get_best_last_model",
+    "list_weights",
+    # 检测结果渲染
+    "Detection",
+    "PredictResult",
+    "finish_predict",
+    "draw_boxes",
+    "draw_log_panel",
+    "load_font",
+    "get_screen_size",
+    "center_window",
+    "FONT_FILES",
+    "DEFAULT_FONT",
+    "BOX_COLOR",
+    "TEXT_COLOR",
+    "PANEL_FONT",
+    "PANEL_COLOR",
+    "PANEL_ALPHA",
+    "TASKBAR_OFFSET",
     # 数据处理
     "coco_to_txt",
     "coco_txt_BaiDu",
@@ -98,7 +131,7 @@ __all__ = [
     "rm_files",
     "split_meta",
     "collect_meta",
-    "spilt_train_test",
+    "split_train_test",
     # 标签治理
     "IMAGE_EXTS",
     "replace_labels_with_target",
@@ -113,8 +146,12 @@ __all__ = [
     "process_files",
     "ignore_something",
     "add_suffix_to_files",
-    # 视频抽帧
+    # 视频抽帧与内存取帧
     "extract_frames",
+    "VIDEO_EXTS",
+    "video_info",
+    "iter_frames",
+    "read_frame",
     # 视觉大模型接口调用
     "OpenAPI",
     "chat_stream",

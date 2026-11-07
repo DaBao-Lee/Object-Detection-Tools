@@ -2,7 +2,7 @@
 
 函数清单：
     rm_icc_profile              删除目录内所有 PNG 的 ICC 色彩配置
-    normalize_labels            把标签坐标夹紧到 1.0 以内
+    normalize_labels            把标签坐标夹紧到 (0, 1) 以内
     replace_labels_with_target  把标签文件里指定类别的 ID 改成目标类别
     batch_replace_labels        整个文件夹的类别 ID 批量替换
     count_labels                统计标签文件里各类别的标注数量（txt / xml）
@@ -11,7 +11,9 @@
 """
 
 import glob
+import math
 import os
+import re
 import unicodedata
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -25,7 +27,8 @@ LABEL_EXTS = (".txt", ".xml")
 XML_OBJECT_TAG = "object"  # 每个标注框所在的标签名
 XML_NAME_TAGS = ("name", "label")  # 类别名所在子标签，按顺序取第一个非空值
 
-# 常见图片扩展名集合，供 collect_images / fill_empty_labels 复用
+# 常见图片扩展名集合，供 collect_images / fill_empty_labels 复用。
+# 注意 dataset.IMG_EXTS 是更窄的一套：划分数据集时多算一种格式等于换训练数据，两边不要对齐
 IMAGE_EXTS = {
     ".jpg",
     ".jpeg",
@@ -43,51 +46,143 @@ IMAGE_EXTS = {
 }
 
 
-def rm_icc_profile(src_path: str) -> None:
-    """删除目录内所有 PNG 的 ICC 色彩配置。注意：就地覆盖写，不可逆。"""
+def rm_icc_profile(src_path: str) -> dict:
+    """删除目录内所有 PNG 的 ICC 色彩配置。注意：就地覆盖写，不可逆。
 
-    src_path = glob.glob(os.path.join(src_path, "*.png"))
-    for path in tqdm(src_path):
-        img = Image.open(path)
-        img.save(path, format="PNG", icc_profile=None)
-
-
-def normalize_labels(src_path: str) -> None:
-    """把标签坐标夹紧到 1.0 以内（>= 1.0 的改写为 0.99999）。注意：就地覆盖写，不可逆。
-
-    逐列检查坐标（跳过类别列），未越界的值保持原文本，不再统一格式化；
-    空行与非数值列原样保留。
+    先把像素 load() 干净再截断重写——就地保存会打开同一个文件写入，
+    Pillow 的解码是惰性的，不先 load 就是在读自己正在截断的那份数据。
+    单张图失败只记进 failures，不再中断整批。
+    返回 {"total", "done", "failures"}。
     """
 
-    for path in tqdm(glob.glob(os.path.join(src_path, "*.txt"))):
+    paths = glob.glob(os.path.join(src_path, "*.png"))
+    done = 0
+    failures: list[tuple[str, str]] = []
+
+    for path in tqdm(paths):
+        try:
+            with Image.open(path) as img:
+                img.load()
+                img.save(path, format="PNG", icc_profile=None)
+            done += 1
+        except Exception as exc:
+            failures.append((path, str(exc)))
+            tqdm.write(f"❌ {os.path.basename(path)} 去 ICC 失败: {exc}")
+
+    if failures:
+        print(f"[warn] {len(failures)}/{len(paths)} 张未处理成功，详见返回值的 failures")
+
+    return {"total": len(paths), "done": done, "failures": failures}
+
+
+def normalize_labels(src_path: str) -> dict:
+    """把标签坐标夹紧到 (0, 1) 开区间内：>= 1.0 改写为 0.99999，<= 0 的负值改写为 0.00001。
+
+    负坐标同样会让 ultralytics 加载标签时出错，旧版只夹上界、下界原样留着，这里补齐。
+    逐列检查坐标（跳过类别列），未越界的值保持原文本；空行与非数值列原样保留；
+    NaN 没法夹，只报出来。只有确实发生改动才就地覆盖写，且只重写发生改动的行。
+
+    返回 {"files", "changed_files", "clipped", "nan_values"}。
+    """
+
+    files = glob.glob(os.path.join(src_path, "*.txt"))
+    changed_files = 0
+    clipped = 0
+    nan_values: list[tuple[str, int]] = []
+
+    for path in tqdm(files):
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
-        new_lines = []
         changed = False
-        for line in lines:
+        for index, line in enumerate(lines):
             parts = line.split()
             if not parts:
-                new_lines.append(line)
-                continue
+                continue  # 空行原样保留
+
+            new_parts = list(parts)
+            touched = False
             for i in range(1, len(parts)):  # 第 0 列是类别 id，不参与坐标夹紧
                 try:
-                    if float(parts[i]) >= 1.0:
-                        parts[i] = "0.99999"
-                        changed = True
+                    value = float(parts[i])
                 except ValueError:
                     continue  # 非数值列原样保留
-            new_lines.append(" ".join(parts) + "\n")
+                if math.isnan(value):
+                    nan_values.append((path, index + 1))
+                    continue
+                if value >= 1.0:
+                    new_parts[i] = "0.99999"
+                    touched = True
+                elif value < 0.0:
+                    new_parts[i] = "0.00001"
+                    touched = True
+
+            if touched:
+                # 只重写这一行；同文件里其它行保持原字节，不再被顺手整篇重排
+                lines[index] = " ".join(new_parts) + "\n"
+                clipped += sum(
+                    1 for i in range(1, len(parts)) if new_parts[i] != parts[i]
+                )
+                changed = True
 
         if changed:
             with open(path, "w", encoding="utf-8") as f:
-                f.writelines(new_lines)
+                f.writelines(lines)
+            changed_files += 1
+
+    if nan_values:
+        print(
+            f"[warn] {len(nan_values)} 行坐标是 NaN，无法夹紧（文件, 行号）："
+            f"{nan_values[:5]}{' …' if len(nan_values) > 5 else ''}"
+        )
+
+    return {
+        "files": len(files),
+        "changed_files": changed_files,
+        "clipped": clipped,
+        "nan_values": nan_values,
+    }
+
+
+# 第一列（类别 ID）之外的部分原样保留，所以只替换行首那一个非空白片段
+_FIRST_COL = re.compile(r"(\s*)(\S+)(.*)", re.DOTALL)
+
+
+def _id_key(value, label: str) -> str:
+    """YOLO txt 的类别 ID 只能是非负整数：能转就转成规范字符串，转不动就把话说清楚。
+
+    旧版直接 int(origin_id)，传个 "car" 进来抛的是 "invalid literal for int()"，
+    看不出到底哪个参数、该传什么。
+    """
+
+    text = str(value).strip()
+    try:
+        num = int(float(text))
+    except ValueError:
+        raise ValueError(
+            f"{label}只能是非负整数或 \"all\"，收到 {value!r}"
+        ) from None
+
+    if num < 0:
+        raise ValueError(f"{label}不能为负数，收到 {value!r}")
+
+    return str(num)
+
+
+def _line_id_key(col: str) -> str:
+    """把标签里已有的类别 ID 归一成比较用的键，让文件里写的 1.0 也能被 ID 1 命中。"""
+
+    try:
+        return str(int(float(col)))
+    except ValueError:
+        return col
 
 
 def _replace_labels_core(txt_path: str, origin_key, target_key: str, replace_all: bool):
     """替换核心：读文件 -> 逐行改写 -> 有变化才就地覆盖写。
 
-    返回 (changed, replaced_count, matched)。异常不在此捕获，向上抛给调用方。
+    返回 (changed, replaced_count, matched)。I/O 异常不在此捕获，向上抛给调用方——
+    吞掉异常会让「没权限读」和「这个文件本来就没这个类别」都变成 (False, 0)，分不清。
     matched 是"命中 origin_key 的有效行数"，与"是否发生改动"分开统计——
     两者只在 origin_id == target_id 时才可能不一致。
     """
@@ -101,28 +196,24 @@ def _replace_labels_core(txt_path: str, origin_key, target_key: str, replace_all
     matched = 0
 
     for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            # 保留空行
-            new_lines.append(line)
-            continue
-
-        parts = stripped.split()
+        parts = line.split()
         if len(parts) < 5:
-            # 格式不合法（不足 5 列），原样保留
+            # 空行或格式不合法（不足 5 列），整行原样保留
             new_lines.append(line)
             continue
 
         # 第一个元素是类别 ID；replace_all 时全部命中，否则只命中与 origin_id 相等的行
-        if replace_all or parts[0] == origin_key:
+        if replace_all or _line_id_key(parts[0]) == origin_key:
             matched += 1
-            # 已经是目标类别的不计入改动
-            if parts[0] != target_key:
-                parts[0] = target_key
+            if parts[0] != target_key:  # 已经是目标类别的不计入改动
+                hit = _FIRST_COL.match(line)
+                new_lines.append(hit.group(1) + target_key + hit.group(3))
                 changed = True
                 replaced_count += 1
-
-        new_lines.append(" ".join(parts) + "\n")
+            else:
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
 
     if changed:
         with open(txt_path, "w", encoding="utf-8") as f:
@@ -131,13 +222,24 @@ def _replace_labels_core(txt_path: str, origin_key, target_key: str, replace_all
     return changed, replaced_count, matched
 
 
+def _resolve_ids(origin_id, target_id):
+    """校验并归一两个 ID，返回 (replace_all, origin_key, target_key)。"""
+
+    replace_all = isinstance(origin_id, str) and origin_id.strip().lower() == "all"
+    origin_key = None if replace_all else _id_key(origin_id, "原始类别 ID")
+    target_key = _id_key(target_id, "目标类别 ID")
+
+    return replace_all, origin_key, target_key
+
+
 def replace_labels_with_target(
     txt_path: str, origin_id, target_id: int, warn_if_no_match: bool = False
 ):
     """把标签文件里「指定类别」每行的类别 ID 改为 target_id，保留坐标列。
 
     origin_id        : 要被替换的原始类别 ID；传字符串 "all"（不区分大小写）时替换所有类别。
-                       传其它值时，只替换类别 ID 与之相等的行。
+                       传其它值时必须能当非负整数用，否则直接报错（旧版是 int() 抛一句
+                       看不懂的 "invalid literal for int()"）。
     target_id        : 目标类别 ID。
     warn_if_no_match : True 时，若整个文件一行都没命中 origin_id（即根本不存在该类别）
                        就打印告警。origin_id="all" 时不会告警（全量替换无所谓命中）。
@@ -146,30 +248,26 @@ def replace_labels_with_target(
         把所有改成 2 -> replace_labels_with_target(p, "all", 2)
         顺带查漏     -> replace_labels_with_target(p, 1, 2, warn_if_no_match=True)
 
-    只有确实发生改动时才就地覆盖写。返回 (changed, num_lines_replaced)；
-    空行、列数不足 5 的非法行原样保留；异常时告警并返回 (False, 0)。
+    只有确实发生改动时才就地覆盖写，且只重写命中的行，未命中的行字节不变。
+    返回 (changed, num_lines_replaced)；文件读不了会抛异常，不再静默返回 (False, 0)。
     """
 
-    replace_all = isinstance(origin_id, str) and origin_id.strip().lower() == "all"
-    origin_key = None if replace_all else str(origin_id)
-    target_key = str(target_id)
+    if not os.path.isfile(txt_path):
+        raise FileNotFoundError(f"标签文件不存在或不是文件：{txt_path}")
 
-    try:
-        changed, replaced_count, matched = _replace_labels_core(
-            txt_path, origin_key, target_key, replace_all
+    replace_all, origin_key, target_key = _resolve_ids(origin_id, target_id)
+
+    changed, replaced_count, matched = _replace_labels_core(
+        txt_path, origin_key, target_key, replace_all
+    )
+
+    if warn_if_no_match and not replace_all and matched == 0:
+        tqdm.write(
+            f"⚠️ 未命中类别 {origin_id}："
+            f"{os.path.basename(txt_path)} 中没有任何该类别标签"
         )
 
-        if warn_if_no_match and not replace_all and matched == 0:
-            tqdm.write(
-                f"⚠️ 未命中类别 {origin_id}："
-                f"{os.path.basename(txt_path)} 中没有任何该类别标签"
-            )
-
-        return changed, replaced_count
-
-    except Exception as e:
-        tqdm.write(f"❌ 处理 {os.path.basename(txt_path)} 失败: {e}")
-        return False, 0
+    return changed, replaced_count
 
 
 def batch_replace_labels(
@@ -177,38 +275,33 @@ def batch_replace_labels(
 ):
     """对文件夹下所有 .txt 标签批量执行类别 ID 替换（不递归子文件夹）。
 
-    origin_id / target_id / warn_if_no_match 语义与 replace_labels_with_target 一致，
-    传 origin_id="all" 即替换全部类别。
+    origin_id / target_id 语义与 replace_labels_with_target 一致，传 origin_id="all" 即替换全部类别。
+    warn_if_no_match=True 时，整文件一行都没命中就逐条打印告警。
 
-    返回 dict: {'total', 'changed_files', 'replaced_lines', 'no_match_files'}
-    no_match_files 统计"一行都没命中该类别"的文件数（origin_id="all" 时恒为 0）。
+    返回 dict: {'total', 'changed_files', 'replaced_lines', 'no_match_files', 'failed'}
+    no_match_files 统计"一行都没命中该类别"的文件数（origin_id="all" 时恒为 0）；
+    failed 是读不了的 (路径, 错误) 清单——单个文件出错不影响其余文件。
     """
 
     if not os.path.isdir(folder):
         raise NotADirectoryError(f"文件夹不存在或不是一个目录：{folder}")
 
-    replace_all = isinstance(origin_id, str) and origin_id.strip().lower() == "all"
-    origin_key = None if replace_all else str(origin_id)
-    target_key = str(target_id)
+    replace_all, origin_key, target_key = _resolve_ids(origin_id, target_id)
 
-    if int(target_id) < 0:
-        raise ValueError("目标类别 ID 不能为负数")
-
-    if not replace_all and int(origin_id) < 0:
-        raise ValueError("原始类别 ID 不能为负数")
-
-    txt_files = [f for f in os.listdir(folder) if f.lower().endswith(".txt")]
+    txt_files = sorted(f for f in os.listdir(folder) if f.lower().endswith(".txt"))
     if not txt_files:
         return {
             "total": 0,
             "changed_files": 0,
             "replaced_lines": 0,
             "no_match_files": 0,
+            "failed": [],
         }
 
     changed_files = 0
     total_replaced = 0
     no_match_files = 0
+    failed: list[tuple[str, str]] = []
 
     for filename in tqdm(txt_files, desc="处理进度", unit="个"):
         txt_path = os.path.join(folder, filename)
@@ -217,8 +310,9 @@ def batch_replace_labels(
             changed, count, matched = _replace_labels_core(
                 txt_path, origin_key, target_key, replace_all
             )
-        except Exception as e:
-            tqdm.write(f"❌ 处理 {filename} 失败: {e}")
+        except Exception as exc:
+            tqdm.write(f"❌ 处理 {filename} 失败: {exc}")
+            failed.append((txt_path, str(exc)))
             continue
 
         if changed:
@@ -229,25 +323,31 @@ def batch_replace_labels(
         if not replace_all and matched == 0:
             no_match_files += 1
             if warn_if_no_match:
-                tqdm.write(
-                    f"⚠️ 未命中类别 {origin_id}：{filename} 中没有任何该类别标签"
-                )
+                tqdm.write(f"⚠️ 未命中类别 {origin_id}：{filename} 中没有任何该类别标签")
 
     return {
         "total": len(txt_files),
         "changed_files": changed_files,
         "replaced_lines": total_replaced,
         "no_match_files": no_match_files,
+        "failed": failed,
     }
 
 
-def collect_images(
-    root: Path, recursive: bool, image_exts: set | None = None
-) -> list[Path]:
-    """收集 root 下所有图片文件，返回排序后的路径列表。"""
+def collect_images(root, recursive: bool, image_exts: set | None = None) -> list[Path]:
+    """收集 root 下所有图片文件，返回排序后的 Path 列表。
+
+    root 收 str / os.PathLike / Path 都行（旧版只认 Path，按 README 的示例传字符串会
+    直接 AttributeError），路径里的 ~ 也会展开。
+    """
+
+    root = Path(root).expanduser()
+    if not root.is_dir():
+        raise FileNotFoundError(f"图片文件夹不存在或不是目录：{root}")
 
     exts = IMAGE_EXTS if image_exts is None else image_exts
     it = root.rglob("*") if recursive else root.glob("*")
+
     return sorted(p for p in it if p.is_file() and p.suffix.lower() in exts)
 
 
@@ -475,7 +575,8 @@ def count_labels(
     labels_dir : 标签文件夹
     recursive  : 是否递归遍历子文件夹
     label_exts : 参与统计的扩展名，默认 (".txt", ".xml")
-    names      : 类别 ID -> 名称的映射，如 {0: "裂缝", 1: "剥落"}。
+    names      : 类别 ID -> 名称的映射，如 {0: "裂缝", 1: "剥落"}，也可直接给一个列表
+                 （按位置当 0、1、2… 的映射，ultralytics 的 yaml names 就有这种）。
                  给了之后数字类别的键显示成 "0:裂缝"（保留 ID 便于回溯原始标签）；
                  未收录的 ID 原样显示，xml 的类别名不受影响。
     verbose    : True 时逐个打印每个文件的类别计数
@@ -495,6 +596,10 @@ def count_labels(
     root = Path(labels_dir).expanduser().resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"标签文件夹不存在或不是文件夹：{root}")
+
+    # 列表形式的 names 按位置补成 {0: ..., 1: ...}，否则 _apply_names 会把值当键去查
+    if isinstance(names, (list, tuple)):
+        names = dict(enumerate(names))
 
     exts = tuple(e if e.startswith(".") else "." + e for e in label_exts)
     it = root.rglob("*") if recursive else root.glob("*")
@@ -594,5 +699,4 @@ def count_labels(
 #     fill_empty_labels("./datasets/xxx/images", "./datasets/xxx/labels", dry_run=True)
 #     replace_labels_with_target("./meta/a.txt", 1, 2)       # 把类别 1 改成 2
 #     replace_labels_with_target("./meta/a.txt", "all", 2)   # 所有类别都改成 2
-#     replace_labels_with_target("./meta/a.txt", 1, 2, warn_if_no_match=True)  # 没有类别 1 时告警
 #     batch_replace_labels("./datasets/交通标志&锥桶/meta/", 1, 2, warn_if_no_match=True)
